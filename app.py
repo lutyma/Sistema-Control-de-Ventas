@@ -11,26 +11,36 @@ st.set_page_config(page_title="Gestión de Ventas y Cuotas", layout="wide")
 # --- ESTILO PARA OCULTAR MENÚS (Pegar aquí) ---
 st.markdown("""
     <style>
-    /* 1. Ocultar menús y encabezados de la aplicación */
+    /* 1. Ocultar el menú superior y el encabezado */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
 
-    /* 2. Ocultar el botón de 'Manage app' (solo lo ves tú) */
-    .stAppDeployButton {display: none !important;}
-
-    /* 3. Ocultar el pie de página de Streamlit Cloud (iconos de GitHub/Streamlit) */
-    div[data-testid="stStatusWidget"] {display: none !important;}
-    .viewerBadge_container__1QSob {display: none !important;}
-    .viewerBadge_link__3S13K {display: none !important;}
-    
-    /* 4. Eliminar el espacio en blanco que queda al final */
-    #root > div:nth-child(1) > div.withScreencast > div > div > div > section > div.block-container {
-        padding-bottom: 0rem;
+    /* 2. Ocultar el botón flotante azul de la esquina inferior derecha (Toolbar) */
+    [data-testid="stStatusWidget"] {
+        display: none !important;
     }
     
-    /* 5. Asegurar que el footer no se renderice de ninguna forma */
-    [data-testid="stFooter"] {display: none !important;}
+    /* 3. Ocultar botones de 'Manage app' y badges de Streamlit Cloud */
+    .stAppDeployButton {
+        display: none !important;
+    }
+    
+    /* 4. Selector de fuerza bruta para cualquier elemento flotante en las esquinas */
+    div[class^="viewerBadge"], div[class*="viewerBadge"] {
+        display: none !important;
+    }
+    
+    /* 5. Quitar el espacio extra del footer y el widget de estado */
+    .stApp > footer {
+        display: none !important;
+    }
+    
+    /* 6. Ajuste opcional: subir un poco el contenido para aprovechar el espacio */
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 0rem;
+    }
     </style>
     """, unsafe_allow_html=True)
 
