@@ -11,13 +11,21 @@ st.set_page_config(page_title="Gestión de Ventas y Cuotas", layout="wide")
 # --- ESTILO PARA OCULTAR MENÚS (Pegar aquí) ---
 st.markdown("""
     <style>
+    /* Oculta el menú principal y la barra de encabezado */
     #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
     header {visibility: hidden;}
-    /* Esto quita el espacio en blanco superior */
+    footer {visibility: hidden;}
+
+    /* Oculta el botón 'Manage app' y decoraciones de Streamlit Cloud */
+    .stAppDeployButton {display: none !important;}
+    stDecoration {display: none !important;}
+    
+    /* Oculta el footer específico de la nube que aparece en móviles */
+    footer {display: none !important;}
+    
+    /* Ajuste de margen superior para que no quede pegado */
     .block-container {
         padding-top: 1rem;
-        padding-bottom: 0rem;
     }
     </style>
     """, unsafe_allow_html=True)
