@@ -8,11 +8,29 @@ from datetime import timedelta
 # --- 1. CONFIGURACIÓN Y CONEXIÓN ---
 st.set_page_config(page_title="Gestión de Ventas y Cuotas", layout="wide")
 
-# RECUERDA: Cambia 'tu_password' por tu contraseña real de Postgres
-#engine = create_engine('postgresql://postgres:postgres@localhost:5432/productos')
+# --- ESTILO PARA OCULTAR MENÚS (Pegar aquí) ---
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    /* Esto quita el espacio en blanco superior */
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 0rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-engine = create_engine('postgresql://neondb_owner:npg_xagC1ljDdn4V@ep-round-sound-acq6ramp.sa-east-1.aws.neon.tech/neondb?sslmode=require')
-
+# Obtener la URL desde los secretos de Streamlit
+# Si no existe en secrets, fallará con un error descriptivo
+try:
+    DATABASE_URL = st.secrets["connections"]["postgresql"]["url"]
+    # Nota: Neon requiere sslmode=require, asegúrate de que la URL en secrets la incluya
+    engine = create_engine(DATABASE_URL)
+except Exception as e:
+    st.error("No se pudo encontrar la configuración de la base de datos en Secrets.")
+    st.stop()
 
 def ejecutar_query(query, params=None):
     """Ejecuta comandos INSERT, UPDATE, DELETE"""
@@ -37,8 +55,9 @@ def login():
             submit = st.form_submit_button("Entrar")
             
             if submit:
-                # AQUÍ defines tu usuario y contraseña
-                if usuario == "admin" and clave == "admin":
+                # Ahora valida contra lo que pusiste en Secrets
+                if usuario == st.secrets["credentials"]["usuario_admin"] and \
+                   clave == st.secrets["credentials"]["clave_admin"]:
                     st.session_state.autenticado = True
                     st.rerun()
                 else:
