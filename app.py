@@ -46,13 +46,14 @@ st.markdown("""
 
 # Obtener la URL desde los secretos de Streamlit
 # Si no existe en secrets, fallará con un error descriptivo
-try:
-    DATABASE_URL = st.secrets["connections"]["postgresql"]["url"]
+# try:
+#     DATABASE_URL = st.secrets["connections"]["postgresql"]["url"]
     # Nota: Neon requiere sslmode=require, asegúrate de que la URL en secrets la incluya
-    engine = create_engine(DATABASE_URL)
-except Exception as e:
-    st.error("No se pudo encontrar la configuración de la base de datos en Secrets.")
-    st.stop()
+    #engine = create_engine(DATABASE_URL)
+engine = create_engine('postgresql://postgres:postgres@localhost:5432/productos')
+# except Exception as e:
+#     st.error("No se pudo encontrar la configuración de la base de datos en Secrets.")
+#     st.stop()
 
 def ejecutar_query(query, params=None):
     """Ejecuta comandos INSERT, UPDATE, DELETE"""
@@ -65,6 +66,28 @@ def cargar_datos(query, params=None):
         return pd.read_sql(text(query), conn, params=params)
     
 # --- NUEVO: FUNCIÓN DE LOGIN ---
+# def login():
+#     if "autenticado" not in st.session_state:
+#         st.session_state.autenticado = False
+
+#     if not st.session_state.autenticado:
+#         st.title("🔐 Acceso al Sistema")
+#         with st.form("login_form"):
+#             usuario = st.text_input("Usuario")
+#             clave = st.text_input("Contraseña", type="password")
+#             submit = st.form_submit_button("Entrar")
+            
+#             if submit:
+#                 # Ahora valida contra lo que pusiste en Secrets
+#                 if usuario == st.secrets["credentials"]["usuario_admin"] and \
+#                    clave == st.secrets["credentials"]["clave_admin"]:
+#                     st.session_state.autenticado = True
+#                     st.rerun()
+#                 else:
+#                     st.error("Usuario o contraseña incorrectos")
+#         return False
+#     return True
+
 def login():
     if "autenticado" not in st.session_state:
         st.session_state.autenticado = False
@@ -77,9 +100,8 @@ def login():
             submit = st.form_submit_button("Entrar")
             
             if submit:
-                # Ahora valida contra lo que pusiste en Secrets
-                if usuario == st.secrets["credentials"]["usuario_admin"] and \
-                   clave == st.secrets["credentials"]["clave_admin"]:
+                # AQUÍ defines tu usuario y contraseña
+                if usuario == "admin" and clave == "admin":
                     st.session_state.autenticado = True
                     st.rerun()
                 else:
