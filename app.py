@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import urllib.parse
 from sqlalchemy import create_engine, text
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
@@ -46,14 +47,14 @@ st.markdown("""
 
 # Obtener la URL desde los secretos de Streamlit
 # Si no existe en secrets, fallará con un error descriptivo
-# try:
-#     DATABASE_URL = st.secrets["connections"]["postgresql"]["url"]
+try:
+    DATABASE_URL = st.secrets["connections"]["postgresql"]["url"]
     # Nota: Neon requiere sslmode=require, asegúrate de que la URL en secrets la incluya
-    #engine = create_engine(DATABASE_URL)
-engine = create_engine('postgresql://postgres:postgres@localhost:5432/productos')
-# except Exception as e:
-#     st.error("No se pudo encontrar la configuración de la base de datos en Secrets.")
-#     st.stop()
+    engine = create_engine(DATABASE_URL)
+# engine = create_engine('postgresql://postgres:postgres@localhost:5432/productos')
+except Exception as e:
+    st.error("No se pudo encontrar la configuración de la base de datos en Secrets.")
+    st.stop()
 
 def ejecutar_query(query, params=None):
     """Ejecuta comandos INSERT, UPDATE, DELETE"""
@@ -64,8 +65,56 @@ def cargar_datos(query, params=None):
     """Ejecuta consultas SELECT y devuelve un DataFrame"""
     with engine.connect() as conn:
         return pd.read_sql(text(query), conn, params=params)
+
+import urllib.parse
+
+def generar_link_whatsapp(vendedor_operacion, cuota_nro, venta_id, producto, cliente):
+    nro_destino = "595972989099" 
+    
+    mensaje = (
+        f"✅ *NOTIFICACIÓN DE COBRO*\n\n"
+        f"👤 *Cobrado por:* {vendedor_operacion}\n"
+        f"🤝 *Cliente:* {cliente}\n"
+        f"📦 *Producto:* {producto}\n"
+        f"🔢 *Cuota N°:* {cuota_nro}\n"
+        f"📄 *Venta #:* {venta_id}\n"
+        f"⏰ *Fecha:* {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    )
+    
+    mensaje_encoded = urllib.parse.quote(mensaje)
+    return f"https://wa.me/{nro_destino}?text={mensaje_encoded}"
     
 # --- NUEVO: FUNCIÓN DE LOGIN ---
+def login():
+    if "autenticado" not in st.session_state:
+        st.session_state.autenticado = False
+    if "usuario_actual" not in st.session_state:
+        st.session_state.usuario_actual = None
+
+    if not st.session_state.autenticado:
+        st.title("🔐 Acceso al Sistema")
+        with st.form("login_form"):
+            usuario = st.text_input("Usuario")
+            clave = st.text_input("Contraseña", type="password")
+            submit = st.form_submit_button("Entrar")
+            
+            if submit:
+                # Traemos todas las credenciales de Secrets
+                creds = st.secrets["credentials"]
+                
+                # Validamos si el usuario existe y si la clave coincide
+                if usuario in creds and clave == str(creds[usuario]):
+                    st.session_state.autenticado = True
+                    st.session_state.usuario_actual = usuario # Guardamos quién entró
+                    st.rerun()
+                else:
+                    st.error("Usuario o contraseña incorrectos")
+        return False
+    return True
+
+# --- USO DE LA FUNCIÓN ---
+    # Aquí sigue el resto de tu aplicación...
+
 # def login():
 #     if "autenticado" not in st.session_state:
 #         st.session_state.autenticado = False
@@ -78,9 +127,8 @@ def cargar_datos(query, params=None):
 #             submit = st.form_submit_button("Entrar")
             
 #             if submit:
-#                 # Ahora valida contra lo que pusiste en Secrets
-#                 if usuario == st.secrets["credentials"]["usuario_admin"] and \
-#                    clave == st.secrets["credentials"]["clave_admin"]:
+#                 # AQUÍ defines tu usuario y contraseña
+#                 if usuario == "admin" and clave == "admin":
 #                     st.session_state.autenticado = True
 #                     st.rerun()
 #                 else:
@@ -88,46 +136,31 @@ def cargar_datos(query, params=None):
 #         return False
 #     return True
 
-def login():
-    if "autenticado" not in st.session_state:
-        st.session_state.autenticado = False
-
-    if not st.session_state.autenticado:
-        st.title("🔐 Acceso al Sistema")
-        with st.form("login_form"):
-            usuario = st.text_input("Usuario")
-            clave = st.text_input("Contraseña", type="password")
-            submit = st.form_submit_button("Entrar")
-            
-            if submit:
-                # AQUÍ defines tu usuario y contraseña
-                if usuario == "admin" and clave == "admin":
-                    st.session_state.autenticado = True
-                    st.rerun()
-                else:
-                    st.error("Usuario o contraseña incorrectos")
-        return False
-    return True
-
 # --- LÓGICA DE CONTROL ---
 if login():
-    # BOTÓN PARA CERRAR SESIÓN (Opcional en el Sidebar)
+    # Mostrar quién está logueado en el sidebar
+    st.sidebar.write(f"👤 Usuario: **{st.session_state.usuario_actual}**")
+    
     if st.sidebar.button("Log out"):
         st.session_state.autenticado = False
+        st.session_state.usuario_actual = None
         st.rerun()
 
 
-# --- 2. BARRA LATERAL: REGISTRO CON LÓGICA DE CRONOGRAMA ---
+    # --- 2. BARRA LATERAL: REGISTRO CON LÓGICA DE CRONOGRAMA ---
     st.sidebar.header("🆕 Registrar Nueva Venta")
     with st.sidebar.form("form_registro", clear_on_submit=True):
         producto = st.text_input("Producto*")
         cliente = st.text_input("Cliente*")
+        
+        # NUEVO: Campo Vendedor
+        vendedor = st.text_input("Vendedor*")
+        
         precio = st.number_input("Precio Total*", min_value=0.0, format="%.2f")
         cantidad_cuotas = st.number_input("Cantidad de Cuotas*", min_value=1, step=1)
         monto_cuota_input = st.number_input("Monto por Cuota*", min_value=0.0, format="%.2f")
         comision = st.number_input("Comisión*", min_value=0.0, format="%.2f")
         
-        # Nuevas opciones de Tipo de Pago
         tipo_pago = st.selectbox("Tipo de Pago*", [
             "Mensual con entrega", 
             "Mensual sin entrega", 
@@ -138,24 +171,33 @@ if login():
         btn_crear = st.form_submit_button("Generar Venta y Cronograma")
         
         if btn_crear:
-            if producto and cliente and precio > 0 and cantidad_cuotas > 0:
+            # Validamos que 'vendedor' también tenga contenido
+            if producto and cliente and vendedor and precio > 0 and cantidad_cuotas > 0:
                 try:
                     with engine.begin() as conn:
-                        # 1. Insertar Cabecera de Venta
+                        # 1. Insertar Cabecera de Venta (Agregamos :vend y la columna vendedor)
                         sql_venta = text("""
-                            INSERT INTO ventas (producto, cliente, precio, total_cuota, monto_cuota, comision, tipo_pago, estado, fecha_creacion)
-                            VALUES (:p, :c, :pre, :tcuo, :mcuo, :com, :tpago, :est, :fecha)
+                            INSERT INTO ventas (producto, cliente, vendedor, precio, total_cuota, monto_cuota, comision, tipo_pago, estado, fecha_creacion)
+                            VALUES (:p, :c, :vend, :pre, :tcuo, :mcuo, :com, :tpago, :est, :fecha)
                             RETURNING id_producto
                         """)
+                        
                         fecha_actual = datetime.now()
                         res = conn.execute(sql_venta, {
-                            "p": producto, "c": cliente, "pre": precio, "tcuo": cantidad_cuotas,
-                            "mcuo": monto_cuota_input, "com": comision, "tpago": tipo_pago,
-                            "est": estado_input, "fecha": fecha_actual
+                            "p": producto, 
+                            "c": cliente, 
+                            "vend": vendedor, # Enviamos el valor del nuevo input
+                            "pre": precio, 
+                            "tcuo": cantidad_cuotas,
+                            "mcuo": monto_cuota_input, 
+                            "com": comision, 
+                            "tpago": tipo_pago,
+                            "est": estado_input, 
+                            "fecha": fecha_actual
                         })
                         nuevo_id = res.fetchone()[0]
 
-                        # 2. Lógica de Generación de Cuotas
+                        # 2. Lógica de Generación de Cuotas (Se mantiene igual)
                         sql_cuota = text("""
                             INSERT INTO detalle_ventas (producto_id, item_cuota, monto_cuota, monto_pago, saldo_cuota, estado, fecha_vencimiento, fecha_pago)
                             VALUES (:id_p, :item, :monto, :pago, :saldo, :est_c, :fv, :fp)
@@ -168,29 +210,23 @@ if login():
                             saldo = monto_cuota_input
                             estado_cuota = "Activo"
 
-                            # --- LÓGICA A: MENSUAL CON ENTREGA ---
                             if tipo_pago == "Mensual con entrega":
                                 vencimiento = fecha_actual + relativedelta(months=(i-1))
-                                if i == 1: # Primera cuota es la entrega
+                                if i == 1:
                                     pago = fecha_actual
                                     monto_pagado = monto_cuota_input
                                     saldo = 0
                                     estado_cuota = "Cancelado"
-                                    vencimiento = fecha_actual # Vencimiento igual a fecha pago
+                                    vencimiento = fecha_actual
 
-                            # --- LÓGICA B: MENSUAL SIN ENTREGA ---
                             elif tipo_pago == "Mensual sin entrega":
                                 vencimiento = fecha_actual + relativedelta(months=i)
-                                # Se mantiene Activo, pago 0, saldo total
 
-                            # --- LÓGICA C: SEMANAL ---
                             elif tipo_pago == "Semanal":
-                                # Primer domingo desde hoy (domingo = 6 en weekday)
                                 dias_al_domingo = (6 - fecha_actual.weekday()) % 7
                                 primer_domingo = fecha_actual + timedelta(days=dias_al_domingo)
                                 vencimiento = primer_domingo + timedelta(weeks=(i-1))
 
-                            # Ejecutar Inserción de la cuota
                             conn.execute(sql_cuota, {
                                 "id_p": nuevo_id,
                                 "item": i,
@@ -206,6 +242,9 @@ if login():
                     st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"Error: {e}")
+            else:
+                # Mensaje de advertencia si falta el vendedor u otros campos
+                st.sidebar.warning("⚠️ Por favor rellene todos los campos obligatorios (*), incluyendo el Vendedor.")
 
     # --- 3. CUERPO PRINCIPAL ---
     st.title("📊 Sistema de Control de Ventas e Ingresos")
@@ -215,48 +254,67 @@ if login():
     ])
 
 
-    # --- PESTAÑA 1: LISTADO GENERAL ---
+   # --- PESTAÑA 1: LISTADO GENERAL ---
     with tab_lista:
         st.subheader("📋 Historial de Ventas")
         
         df_v = cargar_datos("SELECT * FROM ventas ORDER BY id_producto DESC")
         
         if not df_v.empty:
-            col_f1, col_f2 = st.columns([2, 1])
-            with col_f1:
-                filtro_nombre = st.text_input("🔍 Buscar por nombre de producto:", placeholder="Ej: HONOR X7D...")
+            col_f1, col_f2 = st.columns(2)
             
-            # Filtrado
-            df_display = df_v[df_v['producto'].str.contains(filtro_nombre, case=False, na=False)] if filtro_nombre else df_v
+            with col_f1:
+                filtro_nombre = st.text_input("🔍 Buscar por producto:", placeholder="Ej: HONOR X7D...")
+            
+            with col_f2:
+                filtro_cliente = st.text_input("👤 Buscar por cliente:", placeholder="Ej: Juan Pérez...")
+            
+            df_display = df_v.copy()
+            
+            if filtro_nombre:
+                df_display = df_display[df_display['producto'].str.contains(filtro_nombre, case=False, na=False)]
+            
+            if filtro_cliente:
+                df_display = df_display[df_display['cliente'].str.contains(filtro_cliente, case=False, na=False)]
 
-            # --- CAMBIO PARA QUITAR DECIMALES ---
-            # 1. Convertimos las columnas a tipo entero (Int64 maneja mejor los posibles Nulos)
+            # --- CONFIGURACIÓN DE FORMATOS ---
+            
+            # 1. Formatear Fecha (NUEVO)
+            if 'fecha_ultimo_pago' in df_display.columns:
+                # Aseguramos que Pandas lo reconozca como fecha
+                df_display['fecha_ultimo_pago'] = pd.to_datetime(df_display['fecha_ultimo_pago'], errors='coerce')
+
+            # 2. Formatear Números Enteros
             columnas_enteras = ["cuota", "total_cuota"]
             for col in columnas_enteras:
                 if col in df_display.columns:
                     df_display[col] = pd.to_numeric(df_display[col], errors='coerce').fillna(0).astype(int)
 
-            # 2. Definimos el formato: 
-            # Las de dinero con 2 decimales y las de cuotas con 0 decimales
+            # 3. Definir Diccionario de Formatos
             formatos = {}
             
-            # Columnas de dinero (con decimales)
+            # Formato Dinero
             cols_dinero = ["monto_total", "precio", "monto_cuota", "comision"]
             for col in cols_dinero:
                 if col in df_display.columns:
                     formatos[col] = "{:,.2f}"
             
-            # Columnas de cantidad (sin decimales)
+            # Formato Enteros
             for col in columnas_enteras:
                 if col in df_display.columns:
-                    formatos[col] = "{:d}" # ':d' significa entero decimal sin puntos
+                    formatos[col] = "{:d}"
 
-            # 3. Mostrar la tabla
+            # Formato Fecha (NUEVO): Día/Mes/Año Hora:Minuto
+            if 'fecha_ultimo_pago' in df_display.columns:
+                formatos['fecha_ultimo_pago'] = lambda x: x.strftime('%d/%m/%Y %H:%M') if pd.notnull(x) else "-"
+
+            # --- MOSTRAR LA TABLA ---
             if not df_display.empty:
                 st.write(f"Mostrando {len(df_display)} registros:")
-                st.dataframe(df_display.style.format(formatos), use_container_width=True)
+                # Agregamos na_rep="-" para que cualquier otro valor nulo se vea como un guion
+                st.dataframe(df_display.style.format(formatos, na_rep="-"), use_container_width=True)
             else:
-                st.warning(f"No se encontraron resultados.")
+                st.warning(f"No se encontraron resultados para los filtros aplicados.")
                 
         else:
             st.info("No hay ventas registradas aún.")
@@ -297,71 +355,98 @@ if login():
                         if st.button(f"Pagar Cuota {int(fila['item_cuota'])}", 
                                     key=f"btn_pagar_{id_sel}_{fila['item_cuota']}", 
                                     disabled=not esta_activo):
+                            #Buscamos los datos del producto y cliente en el DataFrame de ventas (df_v)
+                            datos_venta = df_v[df_v['id_producto'] == id_sel].iloc[0]
                             st.session_state.cuota_a_pagar = {
                                 "id_p": id_sel,
                                 "item": fila['item_cuota'],
-                                "monto": fila['monto_cuota']
+                                "monto": fila['monto_cuota'],
+                                "producto": datos_venta['producto'], # Guardamos el nombre del producto
+                                "cliente": datos_venta['cliente']    # Guardamos el nombre del cliente
                             }
 
-                # --- MODAL DE CONFIRMACIÓN CON ACTUALIZACIÓN DE CONTADOR ---
+                # --- MODAL DE CONFIRMACIÓN ACTUALIZADO ---
                 if "cuota_a_pagar" in st.session_state:
                     info = st.session_state.cuota_a_pagar
                     
                     @st.dialog("¿Confirmar pago de cuota?")
                     def confirmar_pago():
-                        st.warning(f"Se registrará el pago de la Cuota {int(info['item'])} para la Venta #{info['id_p']}.")
-                        
-                        c_si, c_no = st.columns(2)
-                        if c_si.button("SÍ, confirmar", use_container_width=True, type="primary"):
-                            try:
-                                with engine.begin() as conn:
-                                    # 1. Actualizar el detalle de la cuota
-                                    sql_pagar_detalle = text("""
-                                        UPDATE detalle_ventas 
-                                        SET monto_pago = monto_cuota, 
-                                            saldo_cuota = 0, 
-                                            estado = 'Cancelado', 
-                                            fecha_pago = :hoy
-                                        WHERE producto_id = :id_p AND item_cuota = :item
-                                    """)
-                                    conn.execute(sql_pagar_detalle, {
-                                        "hoy": datetime.now().date(),
-                                        "id_p": info['id_p'],
-                                        "item": info['item']
-                                    })
-                                    
-                                    # 2. Aumentar el contador de cuotas pagadas en la tabla VENTAS
-                                    sql_inc_cuota = text("""
-                                        UPDATE ventas 
-                                        SET cuota = COALESCE(cuota, 0) + 1 
-                                        WHERE id_producto = :id_p
-                                    """)
-                                    conn.execute(sql_inc_cuota, {"id_p": info['id_p']})
-                                    
-                                    # 3. Verificar si se completaron todas las cuotas para cancelar la venta
-                                    sql_check_final = text("""
-                                        UPDATE ventas 
-                                        SET estado = 'Cancelado' 
-                                        WHERE id_producto = :id_p 
-                                        AND cuota >= total_cuota
-                                    """)
-                                    conn.execute(sql_check_final, {"id_p": info['id_p']})
+                        # Verificamos si ya se procesó el pago en esta sesión de diálogo
+                        if "pago_exitoso" not in st.session_state:
+                            st.session_state.pago_exitoso = False
 
-                                del st.session_state.cuota_a_pagar
-                                st.success("¡Pago procesado y contador de venta actualizado!")
-                                st.rerun()
-                                
-                            except Exception as e:
-                                st.error(f"Error al procesar el pago: {e}")
+                        if not st.session_state.pago_exitoso:
+                            st.warning(f"Se registrará el pago de la Cuota {int(info['item'])} para la Venta #{info['id_p']}.")
+                            c_si, c_no = st.columns(2)
                             
-                        if c_no.button("NO, cancelar", use_container_width=True):
-                            del st.session_state.cuota_a_pagar
-                            st.rerun()
+                            if c_si.button("SÍ, confirmar", use_container_width=True, type="primary"):
+                                try:
+                                    ahora = datetime.now()
+                                    with engine.begin() as conn:
+                                        # 1. Actualizar detalle
+                                        conn.execute(text("""
+                                            UPDATE detalle_ventas SET monto_pago = monto_cuota, saldo_cuota = 0, 
+                                            estado = 'Cancelado', fecha_pago = :hoy 
+                                            WHERE producto_id = :id_p AND item_cuota = :item
+                                        """), {"hoy": ahora, "id_p": info['id_p'], "item": info['item']})
+                                        
+                                        # 2. Contador y Fecha último pago
+                                        conn.execute(text("""
+                                            UPDATE ventas SET cuota = COALESCE(cuota, 0) + 1, fecha_ultimo_pago = :hoy 
+                                            WHERE id_producto = :id_p
+                                        """), {"hoy": ahora, "id_p": info['id_p']})
+                                        
+                                        # 3. Check final
+                                        conn.execute(text("""
+                                            UPDATE ventas SET estado = 'Cancelado' 
+                                            WHERE id_producto = :id_p AND cuota >= total_cuota
+                                        """), {"id_p": info['id_p']})
+
+                                    st.session_state.pago_exitoso = True
+                                    st.rerun() # Refrescamos para mostrar el botón de WhatsApp
+
+                                except Exception as e:
+                                    st.error(f"Error al procesar el pago: {e}")
+                            
+                            if c_no.button("NO, cancelar", use_container_width=True):
+                                del st.session_state.cuota_a_pagar
+                                st.rerun()
+                        else:
+                            # ESTADO: PAGO YA REALIZADO, MOSTRAR WHATSAPP Y CIERRE
+                            st.success(f"✅ ¡Pago procesado con éxito por {st.session_state.usuario_actual}!")
+                            
+                            # link = generar_link_whatsapp(
+                            #     st.session_state.usuario_actual, 
+                            #     int(info['item']), 
+                            #     info['id_p']
+                            # )
+
+                            # --- Línea 416 aproximadamente ---
+                            link = generar_link_whatsapp(
+                                st.session_state.usuario_actual, 
+                                int(info['item']), 
+                                info['id_p'],
+                                info['producto'],  # <--- Agregamos este
+                                info['cliente']    # <--- Agregamos este
+)
+
+                            st.markdown(f"""
+                                <a href="{link}" target="_blank" style="text-decoration: none;">
+                                    <div style="background-color: #25D366; color: white; padding: 12px; border-radius: 8px; text-align: center; font-weight: bold; margin-bottom: 15px;">
+                                        📲 Enviar Comprobante por WhatsApp
+                                    </div>
+                                </a>
+                            """, unsafe_allow_html=True)
+                            
+                            st.info("Una vez enviado el mensaje, presiona el botón de abajo para actualizar la lista.")
+                            
+                            if st.button("Finalizar y cerrar", use_container_width=True):
+                                # Limpiamos estados antes de cerrar
+                                del st.session_state.cuota_a_pagar
+                                del st.session_state.pago_exitoso
+                                st.rerun()
 
                     confirmar_pago()
-
-                if 'saldo_cuota' in df_d.columns:
-                    st.info(f"💰 **Saldo Pendiente Total de esta venta:** ${df_d['saldo_cuota'].sum():,.2f}")
 
     # --- PESTAÑA 3: EDICIÓN DE DATOS (CABECERA) ---
     with tab_editar:
