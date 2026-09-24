@@ -456,6 +456,9 @@ if login():
             
             # Obtenemos la fila actual para precargar los datos
             fila_actual = df_v[df_v['id_producto'] == id_edit].iloc[0]
+
+            # Precargar el valor actual de 'observacion' si existe en el DataFrame
+            obs_actual = str(fila_actual['observacion']) if 'observacion' in fila_actual and pd.notnull(fila_actual['observacion']) else ""
             
             with st.form("form_edicion"):
                 col1, col2 = st.columns(2)
@@ -479,12 +482,15 @@ if login():
                         idx_est = 0
                     
                     nuevo_est = st.selectbox("Estado", opciones_est, index=idx_est)
-                
+
+                # NUEVO CAMPO: Observación (fuera de las columnas para ocupar todo el ancho, o donde prefieras)
+                nueva_obs = st.text_input("Observación", value=obs_actual, max_chars=50, help="Máximo 50 caracteres")
+
                 if st.form_submit_button("Guardar Cambios"):
                     # Actualizamos la SQL incluyendo el campo cuota
                     sql_update = """
                         UPDATE ventas 
-                        SET producto=:p, cliente=:c, precio=:pre, cuota=:cuo, estado=:e 
+                        SET producto=:p, cliente=:c, precio=:pre, cuota=:cuo, estado=:e, observacion=:obs
                         WHERE id_producto=:id
                     """
                     ejecutar_query(sql_update, {
@@ -493,6 +499,7 @@ if login():
                         "pre": nuevo_precio, 
                         "cuo": nueva_cuota, # <-- Nuevo valor
                         "e": nuevo_est, 
+                        "obs": nueva_obs,
                         "id": id_edit
                     })
                     st.success(f"✅ Venta #{id_edit} actualizada correctamente")
