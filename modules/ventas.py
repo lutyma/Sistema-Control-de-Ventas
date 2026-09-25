@@ -46,7 +46,6 @@ def render_ventas():
         except Exception:
             df_clientes = pd.DataFrame()
 
-    # Opción neutra por defecto
     PLACEHOLDER_CLIENTE = "-- Seleccione un Cliente --"
     opciones_clientes = [PLACEHOLDER_CLIENTE]
     dict_clientes = {}
@@ -90,11 +89,11 @@ def render_ventas():
     st.sidebar.header("🆕 Registrar Nueva Venta")
 
     if len(opciones_clientes) == 1:
-        st.sidebar.warning("⚠️ No hay clientes registrados. Vaya a la pestaña 'Gestión de Clientes' para registrar uno.")
+        st.sidebar.warning("⚠️ No hay clientes registrados. Vaya al menú '⚙️ Paramétrico -> 👤 Gestión de Clientes' para registrar uno.")
     elif len(opciones_productos) == 1:
-        st.sidebar.warning("⚠️ No hay productos registrados. Vaya al módulo '🛒 E-Commerce' para registrar productos.")
+        st.sidebar.warning("⚠️ No hay productos registrados. Vaya al menú '⚙️ Paramétrico -> 📦 Gestión de Productos' para registrar productos.")
     else:
-        # Selectbox de Cliente (Con opción vacía predeterminada)
+        # Selectbox de Cliente
         cliente_label_sel = st.sidebar.selectbox(
             "👤 Buscar / Seleccionar Cliente*", 
             options=opciones_clientes,
@@ -104,7 +103,7 @@ def render_ventas():
         )
         cliente_seleccionado = dict_clientes.get(cliente_label_sel, "")
 
-        # Selectbox de Producto (Con opción vacía predeterminada)
+        # Selectbox de Producto
         producto_label_sel = st.sidebar.selectbox(
             "📦 Buscar / Seleccionar Producto*",
             options=opciones_productos,
@@ -113,7 +112,6 @@ def render_ventas():
             help="Escriba el nombre del producto para filtrar"
         )
 
-        # Valores predeterminados solo si selecciona un producto real
         info_p = dict_productos.get(producto_label_sel, {})
         producto_seleccionado = info_p.get("nombre", "")
         precio_default = info_p.get("precio", 0.0)
@@ -135,7 +133,6 @@ def render_ventas():
             btn_crear = st.form_submit_button("Generar Venta y Cronograma")
             
             if btn_crear:
-                # Validaciones estrictas antes de procesar
                 if cliente_label_sel == PLACEHOLDER_CLIENTE or not cliente_seleccionado:
                     st.sidebar.error("❌ Debe seleccionar un cliente registrado válido.")
                 elif producto_label_sel == PLACEHOLDER_PRODUCTO or not producto_seleccionado:
@@ -208,10 +205,9 @@ def render_ventas():
     # --- CUERPO PRINCIPAL ---
     st.title("📊 Sistema de Control de Ventas e Ingresos")
 
-    tab_lista, tab_detalles, tab_clientes, tab_editar, tab_editar_detalles = st.tabs([
+    tab_lista, tab_detalles, tab_editar, tab_editar_detalles = st.tabs([
         "📋 Listado de Ventas", 
         "🔍 Ver Detalles de Cuotas", 
-        "👤 Gestión de Clientes", 
         "✏️ Modificar Venta", 
         "💳 Modificar Cuota"
     ])
@@ -358,47 +354,7 @@ def render_ventas():
 
                     confirmar_pago()
 
-    # --- PESTAÑA 3: GESTIÓN DE CLIENTES ---
-    with tab_clientes:
-        st.subheader("👤 Alta y Registro de Nuevos Clientes")
-        col_c1, col_c2 = st.columns([1, 2])
-        
-        with col_c1:
-            st.write("#### Registrar Nuevo Cliente")
-            with st.form("form_nuevo_cliente", clear_on_submit=True):
-                nombre_c = st.text_input("Nombre y Apellido*")
-                telefono_c = st.text_input("Teléfono")
-                doc_c = st.text_input("N° Documento / RUC")
-                
-                if st.form_submit_button("Guardar Cliente", type="primary"):
-                    if nombre_c:
-                        try:
-                            try:
-                                ejecutar_query("""
-                                    INSERT INTO clientes (nombre, telefono, documento) 
-                                    VALUES (:n, :t, :d)
-                                """, {"n": nombre_c, "t": telefono_c, "d": doc_c})
-                            except Exception:
-                                ejecutar_query("""
-                                    INSERT INTO clientes (nombres, telefono, numero_documento) 
-                                    VALUES (:n, :t, :d)
-                                """, {"n": nombre_c, "t": telefono_c, "d": doc_c})
-                                
-                            st.success(f"✅ Cliente '{nombre_c}' registrado con éxito.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al registrar cliente: {e}")
-                    else:
-                        st.warning("⚠️ El nombre del cliente es obligatorio.")
-        
-        with col_c2:
-            st.write("#### Lista de Clientes Registrados")
-            if not df_clientes.empty:
-                st.dataframe(df_clientes, use_container_width=True)
-            else:
-                st.info("No hay clientes registrados aún.")
-
-    # --- PESTAÑA 4: EDICIÓN DE DATOS DE VENTA ---
+    # --- PESTAÑA 3: EDICIÓN DE DATOS DE VENTA ---
     with tab_editar:
         st.subheader("✏️ Modificar Información de Venta")
         if not df_v.empty:
@@ -445,7 +401,7 @@ def render_ventas():
                     st.success(f"✅ Venta #{id_edit} actualizada correctamente")
                     st.rerun()
 
-    # --- PESTAÑA 5: EDICIÓN DE DETALLES (CUOTAS) ---
+    # --- PESTAÑA 4: EDICIÓN DE DETALLES (CUOTAS) ---
     with tab_editar_detalles:
         st.subheader("💳 Modificar Detalle de Cuota Individual")
         if not df_v.empty:
