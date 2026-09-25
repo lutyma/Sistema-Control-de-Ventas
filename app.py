@@ -4,7 +4,14 @@ from modules.ventas import render_ventas
 from modules.ecommerce import render_ecommerce
 
 # --- 1. CONFIGURACIÓN Y ESTILOS CSS ---
-st.set_page_config(page_title="Sistema Integral de Gestión", layout="wide")
+#st.set_page_config(page_title="Sistema Integral de Gestión", layout="wide")
+
+# Configura la barra lateral para que NUNCA empiece colapsada
+st.set_page_config(
+    page_title="Sistema de Ventas",
+    layout="wide",
+    initial_sidebar_state="expanded" # Opciones: "expanded" (siempre abierto), "collapsed" o "auto"
+)
 
 st.markdown("""
     <style>
