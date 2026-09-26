@@ -6,22 +6,199 @@ from dateutil.relativedelta import relativedelta
 from database.connection import ejecutar_query, cargar_datos, engine
 from sqlalchemy import text
 
-def generar_link_whatsapp(vendedor_operacion, cuota_nro, venta_id, producto, cliente):
+def generar_link_whatsapp(vendedor_operacion, cuota_nro, venta_id, producto, cliente, monto_pagado_hoy=None):
     nro_destino = "595972989099" 
+    txt_monto = f" (Gs. {monto_pagado_hoy:,.0f})" if monto_pagado_hoy else ""
     mensaje = (
         f"✅ *NOTIFICACIÓN DE COBRO*\n\n"
         f"👤 *Cobrado por:* {vendedor_operacion}\n"
         f"🤝 *Cliente:* {cliente}\n"
         f"📦 *Producto:* {producto}\n"
-        f"🔢 *Cuota N°:* {cuota_nro}\n"
+        f"🔢 *Cuota N°:* {cuota_nro}{txt_monto}\n"
         f"📄 *Venta #:* {venta_id}\n"
         f"⏰ *Fecha:* {datetime.now().strftime('%d/%m/%Y %H:%M')}"
     )
     mensaje_encoded = urllib.parse.quote(mensaje)
     return f"https://wa.me/{nro_destino}?text={mensaje_encoded}"
 
+
+# --- DIÁLOGO 1: VISUALIZACIÓN COMPLETA DE VENTA Y CRONOGRAMA ---
+@st.dialog("📄 Detalle General de la Venta", width="large")
+def dialog_ver_venta_completa(id_venta):
+    df_v_sel = cargar_datos("SELECT * FROM ventas WHERE venta_id = :id_v", params={"id_v": int(id_venta)})
+    
+    if df_v_sel.empty:
+        st.error("No se encontraron los datos de esta venta.")
+        return
+
+    v_data = df_v_sel.iloc[0]
+    
+    # 1. Información General de la Venta
+    st.subheader(f"Venta #{id_venta} - {v_data['producto']}")
+    
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(f"👤 **Cliente:** {v_data['cliente']}")
+        st.markdown(f"👔 **Vendedor:** {v_data.get('vendedor', '-')}")
+        st.markdown(f"📅 **Fecha Venta:** {pd.to_datetime(v_data.get('fecha_creacion')).strftime('%d/%m/%Y %H:%M') if pd.notnull(v_data.get('fecha_creacion')) else '-'}")
+    
+    with c2:
+        precio_val = float(v_data['precio']) if pd.notnull(v_data['precio']) else 0.0
+        comision_val = float(v_data.get('comision', 0)) if pd.notnull(v_data.get('comision')) else 0.0
+        st.markdown(f"💰 **Precio Total:** Gs. {precio_val:,.0f}")
+        st.markdown(f"💵 **Comisión:** Gs. {comision_val:,.0f}")
+        st.markdown(f"💳 **Tipo de Pago:** {v_data.get('tipo_pago', '-')}")
+
+    with c3:
+        cuota_p = int(v_data['cuota']) if pd.notnull(v_data['cuota']) else 0
+        tot_c = int(v_data['total_cuota']) if pd.notnull(v_data['total_cuota']) else 1
+        st.markdown(f"🔢 **Cuotas Pagadas:** {cuota_p} / {tot_c}")
+        st.markdown(f"📌 **Estado:** `{v_data['estado']}`")
+        if 'observacion' in v_data and pd.notnull(v_data['observacion']) and str(v_data['observacion']).strip():
+            st.markdown(f"📝 **Observación:** {v_data['observacion']}")
+
+    st.divider()
+
+    # 2. Cronograma de Cuotas
+    st.subheader("📅 Cronograma de Cuotas y Pagos")
+    df_cuotas = cargar_datos("SELECT * FROM detalle_ventas WHERE venta_id = :id_v ORDER BY item_cuota ASC", params={"id_v": int(id_venta)})
+
+    if not df_cuotas.empty:
+        cols_num = ["monto_cuota", "monto_pago", "saldo_cuota"]
+        for col in cols_num:
+            if col in df_cuotas.columns:
+                df_cuotas[col] = pd.to_numeric(df_cuotas[col], errors='coerce').fillna(0.0)
+
+        for col_f in ['fecha_vencimiento', 'fecha_pago']:
+            if col_f in df_cuotas.columns:
+                df_cuotas[col_f] = pd.to_datetime(df_cuotas[col_f], errors='coerce').dt.strftime('%d/%m/%Y')
+
+        fmt_dict = {col: "{:,.2f}" for col in cols_num if col in df_cuotas.columns}
+        st.dataframe(df_cuotas.style.format(fmt_dict, na_rep="-"), use_container_width=True)
+    else:
+        st.info("No hay cuotas registradas para esta venta.")
+
+    if st.button("Cerrar Detalle", use_container_width=True):
+        if "ver_venta_id" in st.session_state:
+            del st.session_state.ver_venta_id
+        st.rerun()
+
+
+# --- DIÁLOGO 2: PAGO RÁPIDO DESDE HISTORIAL ---
+@st.dialog("💳 Cobro Rápido de Cuota")
+def dialog_pago_rapido(id_venta, producto, cliente):
+    df_cuota_pendiente = cargar_datos("""
+        SELECT * FROM detalle_ventas 
+        WHERE venta_id = :id_v AND (estado = 'Activo' OR estado IS NULL OR saldo_cuota > 0)
+        ORDER BY item_cuota ASC 
+        LIMIT 1
+    """, params={"id_v": int(id_venta)})
+
+    if df_cuota_pendiente.empty:
+        st.success("🎉 ¡Esta venta no tiene cuotas pendientes de pago!")
+        if st.button("Cerrar", use_container_width=True):
+            if "pago_rapido_datos" in st.session_state:
+                del st.session_state.pago_rapido_datos
+            st.rerun()
+        return
+
+    cuota = df_cuota_pendiente.iloc[0]
+    num_cuota = int(cuota['item_cuota'])
+    monto_cuota = float(cuota['monto_cuota']) if pd.notnull(cuota['monto_cuota']) else 0.0
+    monto_pago_prev = float(cuota['monto_pago']) if pd.notnull(cuota['monto_pago']) else 0.0
+    saldo_actual = float(cuota['saldo_cuota']) if pd.notnull(cuota['saldo_cuota']) and float(cuota['saldo_cuota']) > 0 else monto_cuota
+
+    if "cobro_rapido_exitoso" not in st.session_state:
+        st.session_state.cobro_rapido_exitoso = False
+
+    if not st.session_state.cobro_rapido_exitoso:
+        st.markdown(f"**Venta #:** {id_venta} | **Cliente:** {cliente}")
+        st.markdown(f"**Producto:** {producto}")
+        st.info(f"📌 **Cuota a Pagar:** N° {num_cuota} | **Saldo Pendiente:** Gs. {saldo_actual:,.0f}")
+
+        tipo_pago_opcion = st.radio("Modalidad de Pago:", ["Pagar Saldo Completo", "Pago Parcial"], horizontal=True)
+
+        if tipo_pago_opcion == "Pagar Saldo Completo":
+            monto_a_cobrar = saldo_actual
+        else:
+            monto_a_cobrar = st.number_input("Monto a Cobrar (Gs.):", min_value=1.0, max_value=saldo_actual, value=min(saldo_actual, 50000.0), step=5000.0)
+
+        col_si, col_no = st.columns(2)
+        if col_si.button("✅ Registrar Pago", use_container_width=True, type="primary"):
+            try:
+                ahora = datetime.now()
+                nuevo_pago_acumulado = monto_pago_prev + monto_a_cobrar
+                nuevo_saldo = max(0.0, saldo_actual - monto_a_cobrar)
+                nuevo_estado_cuota = "Cancelado" if nuevo_saldo == 0 else "Activo"
+
+                with engine.begin() as conn:
+                    conn.execute(text("""
+                        UPDATE detalle_ventas 
+                        SET monto_pago = :pago, saldo_cuota = :saldo, 
+                            estado = :est, fecha_pago = :hoy 
+                        WHERE venta_id = :id_v AND item_cuota = :item
+                    """), {
+                        "pago": nuevo_pago_acumulado,
+                        "saldo": nuevo_saldo,
+                        "est": nuevo_estado_cuota,
+                        "hoy": ahora,
+                        "id_v": id_venta,
+                        "item": num_cuota
+                    })
+
+                    if nuevo_saldo == 0:
+                        conn.execute(text("""
+                            UPDATE ventas 
+                            SET cuota = COALESCE(cuota, 0) + 1, fecha_ultimo_pago = :hoy 
+                            WHERE venta_id = :id_v
+                        """), {"hoy": ahora, "id_v": id_venta})
+
+                        conn.execute(text("""
+                            UPDATE ventas 
+                            SET estado = 'Cancelado' 
+                            WHERE venta_id = :id_v AND cuota >= total_cuota
+                        """), {"id_v": id_venta})
+
+                st.session_state.cobro_rapido_exitoso = True
+                st.session_state.monto_cobrado_hoy = monto_a_cobrar
+                st.session_state.num_cuota_cobrada = num_cuota
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error al procesar el pago: {e}")
+
+        if col_no.button("❌ Cancelar", use_container_width=True):
+            if "pago_rapido_datos" in st.session_state:
+                del st.session_state.pago_rapido_datos
+            st.rerun()
+
+    else:
+        st.success(f"🎉 ¡Pago de Gs. {st.session_state.monto_cobrado_hoy:,.0f} registrado con éxito!")
+        
+        link_wa = generar_link_whatsapp(
+            st.session_state.usuario_actual,
+            st.session_state.num_cuota_cobrada,
+            id_venta,
+            producto,
+            cliente,
+            st.session_state.monto_cobrado_hoy
+        )
+        st.markdown(f"""
+            <a href="{link_wa}" target="_blank" style="text-decoration: none;">
+                <div style="background-color: #25D366; color: white; padding: 12px; border-radius: 8px; text-align: center; font-weight: bold; margin-bottom: 15px;">
+                    📲 Enviar Comprobante por WhatsApp
+                </div>
+            </a>
+        """, unsafe_allow_html=True)
+
+        if st.button("Finalizar y Cerrar", use_container_width=True):
+            if "pago_rapido_datos" in st.session_state:
+                del st.session_state.pago_rapido_datos
+            if "cobro_rapido_exitoso" in st.session_state:
+                del st.session_state.cobro_rapido_exitoso
+            st.rerun()
+
+
 def render_ventas():
-    # Asegurar usuario en sesión
     if "usuario_actual" not in st.session_state:
         st.session_state.usuario_actual = "Sistema"
 
@@ -93,7 +270,6 @@ def render_ventas():
     elif len(opciones_productos) == 1:
         st.sidebar.warning("⚠️ No hay productos registrados. Vaya al menú '⚙️ Paramétrico -> 📦 Gestión de Productos' para registrar productos.")
     else:
-        # Selectbox de Cliente
         cliente_label_sel = st.sidebar.selectbox(
             "👤 Buscar / Seleccionar Cliente*", 
             options=opciones_clientes,
@@ -103,7 +279,6 @@ def render_ventas():
         )
         cliente_seleccionado = dict_clientes.get(cliente_label_sel, "")
 
-        # Selectbox de Producto
         producto_label_sel = st.sidebar.selectbox(
             "📦 Buscar / Seleccionar Producto*",
             options=opciones_productos,
@@ -140,7 +315,6 @@ def render_ventas():
                 elif vendedor and precio_final > 0 and cantidad_cuotas > 0:
                     try:
                         with engine.begin() as conn:
-                            # 1. Registrar Venta
                             sql_venta = text("""
                                 INSERT INTO ventas (producto, cliente, vendedor, precio, total_cuota, monto_cuota, comision, tipo_pago, estado, fecha_creacion)
                                 VALUES (:p, :c, :vend, :pre, :tcuo, :mcuo, :com, :tpago, :est, :fecha)
@@ -154,14 +328,12 @@ def render_ventas():
                             })
                             nuevo_id = res.fetchone()[0]
 
-                            # 2. Descontar stock
                             conn.execute(text("""
                                 UPDATE ecommerce_productos 
                                 SET stock = GREATEST(0, stock - 1) 
                                 WHERE nombre = :p
                             """), {"p": producto_seleccionado})
 
-                            # 3. Generar Cuotas
                             sql_cuota = text("""
                                 INSERT INTO detalle_ventas (venta_id, item_cuota, monto_cuota, monto_pago, saldo_cuota, estado, fecha_vencimiento, fecha_pago)
                                 VALUES (:id_p, :item, :monto, :pago, :saldo, :est_c, :fv, :fp)
@@ -212,43 +384,121 @@ def render_ventas():
         "💳 Modificar Cuota"
     ])
 
-    # --- PESTAÑA 1: LISTADO GENERAL ---
+    # --- PESTAÑA 1: LISTADO GENERAL CON FILTROS Y RESALTADO DE MOROSIDAD ---
     with tab_lista:
         st.subheader("📋 Historial de Ventas")
         if not df_v.empty:
-            col_f1, col_f2 = st.columns(2)
+            col_f1, col_f2, col_f3 = st.columns([2, 2, 1.8])
             with col_f1:
                 filtro_nombre = st.text_input("🔍 Buscar por producto:", placeholder="Ej: HONOR X7D...")
             with col_f2:
                 filtro_cliente = st.text_input("👤 Buscar por cliente:", placeholder="Ej: Juan Pérez...")
+            with col_f3:
+                filtro_estado = st.selectbox("📌 Estado / Filtro:", ["Activas", "🔴 Atrasados", "Todas", "Canceladas"], index=0)
             
             df_display = df_v.copy()
+            hace_un_mes = datetime.now() - timedelta(days=30)
+
+            # 1. Filtro por Estado / Morosidad
+            if 'estado' in df_display.columns:
+                if filtro_estado == "Activas":
+                    df_display = df_display[df_display['estado'].astype(str).str.strip().str.capitalize() == "Activo"]
+                elif filtro_estado == "Canceladas":
+                    df_display = df_display[df_display['estado'].astype(str).str.strip().str.capitalize() == "Cancelado"]
+                elif filtro_estado == "🔴 Atrasados":
+                    cond_activo = df_display['estado'].astype(str).str.strip().str.capitalize() == "Activo"
+                    f_pagos_dt = pd.to_datetime(df_display['fecha_ultimo_pago'], errors='coerce')
+                    cond_atrasado = (f_pagos_dt < hace_un_mes) & (pd.notnull(f_pagos_dt))
+                    df_display = df_display[cond_activo & cond_atrasado]
+
+            # 2. Filtros de Búsqueda por Texto
             if filtro_nombre:
                 df_display = df_display[df_display['producto'].str.contains(filtro_nombre, case=False, na=False)]
             if filtro_cliente:
                 df_display = df_display[df_display['cliente'].str.contains(filtro_cliente, case=False, na=False)]
 
-            if 'fecha_ultimo_pago' in df_display.columns:
-                df_display['fecha_ultimo_pago'] = pd.to_datetime(df_display['fecha_ultimo_pago'], errors='coerce')
+            st.write(f"Mostrando **{len(df_display)}** ventas ({filtro_estado}):")
 
-            columnas_enteras = ["cuota", "total_cuota"]
-            for col in columnas_enteras:
-                if col in df_display.columns:
-                    df_display[col] = pd.to_numeric(df_display[col], errors='coerce').fillna(0).astype(int)
+            if df_display.empty:
+                st.info(f"No hay ventas que coincidan con el filtro '{filtro_estado}'.")
+            else:
+                # Renderizado fila por fila con resaltado visual
+                for _, fila in df_display.iterrows():
+                    id_v = fila['venta_id']
+                    prod_v = fila['producto']
+                    cli_v = fila['cliente']
+                    precio_v = float(fila['precio']) if pd.notnull(fila['precio']) else 0.0
+                    cuota_pagada = int(fila['cuota']) if pd.notnull(fila['cuota']) else 0
+                    tot_cuotas = int(fila['total_cuota']) if pd.notnull(fila['total_cuota']) else 1
+                    est_v = str(fila['estado']).strip()
+                    
+                    # Lógica de semáforo por fecha de último pago
+                    f_u_pago = pd.to_datetime(fila.get('fecha_ultimo_pago'), errors='coerce')
+                    
+                    if pd.isnull(f_u_pago):
+                        # Caso: Venta nueva (Sin pagos aún) -> Gris Neutro
+                        color_border = "#9E9E9E"
+                        badge_html = "<span style='background-color: #E0E0E0; color: #424242; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;'>⚪ NUEVA VENTA</span>"
+                        txt_fecha_pago = "Sin pagos registrados"
+                    elif f_u_pago < hace_un_mes and est_v.lower() == "activo":
+                        # Caso: Más de 1 mes sin pagar -> Rojo (Moroso / Atrasado)
+                        color_border = "#FF4B4B"
+                        badge_html = "<span style='background-color: #FFCDD2; color: #B71C1C; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;'>🔴 ATRASADO (+1 MES)</span>"
+                        txt_fecha_pago = f"Último pago: {f_u_pago.strftime('%d/%m/%Y')}"
+                    else:
+                        # Caso: Al día o Cancelado -> Verde / Normal
+                        color_border = "#2E7D32"
+                        badge_html = "<span style='background-color: #C8E6C9; color: #1B5E20; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;'>🟢 AL DÍA</span>"
+                        txt_fecha_pago = f"Último pago: {f_u_pago.strftime('%d/%m/%Y')}"
 
-            formatos = {}
-            cols_dinero = ["monto_total", "precio", "monto_cuota", "comision"]
-            for col in cols_dinero:
-                if col in df_display.columns:
-                    formatos[col] = "{:,.2f}"
-            for col in columnas_enteras:
-                if col in df_display.columns:
-                    formatos[col] = "{:d}"
-            if 'fecha_ultimo_pago' in df_display.columns:
-                formatos['fecha_ultimo_pago'] = lambda x: x.strftime('%d/%m/%Y %H:%M') if pd.notnull(x) else "-"
+                    # Tarjeta con borde personalizado según color de mora
+                    st.markdown(f"""
+                        <div style="border-left: 6px solid {color_border}; padding: 10px; border-radius: 6px; background-color: rgba(128, 128, 128, 0.05); margin-bottom: 10px;">
+                    """, unsafe_allow_html=True)
 
-            st.write(f"Mostrando {len(df_display)} registros:")
-            st.dataframe(df_display.style.format(formatos, na_rep="-"), use_container_width=True)
+                    c_info, c_cuotas, c_monto, c_acciones = st.columns([2.8, 1.8, 1.8, 2.6])
+                    
+                    with c_info:
+                        st.markdown(f"**Venta #{id_v}** - {prod_v} &nbsp; {badge_html}", unsafe_allow_html=True)
+                        st.caption(f"👤 Cliente: **{cli_v}** | Vendedor: {fila.get('vendedor', '-')}")
+                    
+                    with c_cuotas:
+                        st.markdown(f"**Cuotas:** {cuota_pagada} / {tot_cuotas}")
+                        st.caption(f"🗓️ {txt_fecha_pago}")
+                    
+                    with c_monto:
+                        st.markdown(f"**Gs. {precio_v:,.0f}**")
+                        st.caption(f"Estado: **{est_v}**")
+
+                    with c_acciones:
+                        btn_col1, btn_col2 = st.columns(2)
+                        
+                        # Botón 1: Ver Venta
+                        with btn_col1:
+                            if st.button("👁️ Ver", key=f"btn_ver_grid_{id_v}", use_container_width=True):
+                                st.session_state.ver_venta_id = id_v
+
+                        # Botón 2: Pagar Cuota
+                        with btn_col2:
+                            pago_habilitado = (est_v.lower() == "activo" and cuota_pagada < tot_cuotas)
+                            if st.button("💳 Pagar", key=f"btn_pago_grid_{id_v}", disabled=not pago_habilitado, type="primary", use_container_width=True):
+                                st.session_state.pago_rapido_datos = {
+                                    "id": id_v,
+                                    "producto": prod_v,
+                                    "cliente": cli_v
+                                }
+
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+            # Activar ventana emergente para Ver Venta
+            if "ver_venta_id" in st.session_state:
+                dialog_ver_venta_completa(st.session_state.ver_venta_id)
+
+            # Activar ventana emergente para Cobro Rápido
+            if "pago_rapido_datos" in st.session_state:
+                datos = st.session_state.pago_rapido_datos
+                dialog_pago_rapido(datos['id'], datos['producto'], datos['cliente'])
+
         else:
             st.info("No hay ventas registradas aún.")
 
