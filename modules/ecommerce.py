@@ -82,8 +82,6 @@ def render_ecommerce():
                             st.caption("❌ Agotado")
         else:
             st.info("No hay productos disponibles en el catálogo.")
-
-
 # =============================================================================
 # 2. GESTIÓN DE PRODUCTOS (Paramétrico -> Submódulo)
 # =============================================================================
@@ -196,7 +194,6 @@ def render_gestion_productos():
                         st.error(f"Error al actualizar producto: {e}")
         else:
             st.info("No hay productos para modificar.")
-
     # --- PESTAÑA 3: LISTA GENERAL DE PRODUCTOS ---
     with tab_tabla:
         st.subheader("📋 Catálogo de Productos Registrados")

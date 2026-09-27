@@ -198,7 +198,37 @@ def dialog_pago_rapido(id_venta, producto, cliente):
             st.rerun()
 
 
+# --- DIÁLOGO 3: ELIMINAR VENTA COMPLETA ---
+@st.dialog("⚠️ Eliminar Venta")
+def dialog_eliminar_venta(id_venta, producto, cliente):
+    st.warning(f"¿Está seguro de que desea eliminar permanentemente la **Venta #{id_venta}**?")
+    st.markdown(f"**Cliente:** {cliente}\n\n**Producto:** {producto}")
+    st.error("🚨 Esta acción eliminará la venta y todas sus cuotas registradas de la base de datos. No se puede deshacer.")
+
+    col_confirmar, col_cancelar = st.columns(2)
+
+    if col_confirmar.button("🔥 Sí, Eliminar", use_container_width=True, type="primary"):
+        try:
+            with engine.begin() as conn:
+                # 1. Eliminar cuotas del detalle
+                conn.execute(text("DELETE FROM detalle_ventas WHERE venta_id = :id_v"), {"id_v": id_venta})
+                # 2. Eliminar la cabecera de la venta
+                conn.execute(text("DELETE FROM ventas WHERE venta_id = :id_v"), {"id_v": id_venta})
+
+            st.success(f"✅ Venta #{id_venta} eliminada correctamente.")
+            if "eliminar_venta_datos" in st.session_state:
+                del st.session_state.eliminar_venta_datos
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al eliminar la venta: {e}")
+
+    if col_cancelar.button("❌ Cancelar", use_container_width=True):
+        if "eliminar_venta_datos" in st.session_state:
+            del st.session_state.eliminar_venta_datos
+        st.rerun()
+
 def render_ventas():
+
     if "usuario_actual" not in st.session_state:
         st.session_state.usuario_actual = "Sistema"
 
@@ -278,7 +308,6 @@ def render_ventas():
             help="Escriba el nombre o teléfono para filtrar"
         )
         cliente_seleccionado = dict_clientes.get(cliente_label_sel, "")
-
         producto_label_sel = st.sidebar.selectbox(
             "📦 Buscar / Seleccionar Producto*",
             options=opciones_productos,
@@ -314,17 +343,27 @@ def render_ventas():
                     st.sidebar.error("❌ Debe seleccionar un producto registrado válido.")
                 elif vendedor and precio_final > 0 and cantidad_cuotas > 0:
                     try:
+                        fecha_actual = datetime.now()
+                        
+                        # Definir valores iniciales de cuota y fecha_ultimo_pago según tipo_pago
+                        if tipo_pago == "Mensual con entrega":
+                            cuota_inicial = 1
+                            fecha_u_pago = fecha_actual
+                        else:
+                            cuota_inicial = 0
+                            fecha_u_pago = None
+
                         with engine.begin() as conn:
                             sql_venta = text("""
-                                INSERT INTO ventas (producto, cliente, vendedor, precio, total_cuota, monto_cuota, comision, tipo_pago, estado, fecha_creacion)
-                                VALUES (:p, :c, :vend, :pre, :tcuo, :mcuo, :com, :tpago, :est, :fecha)
+                                INSERT INTO ventas (producto, cliente, vendedor, precio, total_cuota, monto_cuota, comision, tipo_pago, estado, fecha_creacion, cuota, fecha_ultimo_pago)
+                                VALUES (:p, :c, :vend, :pre, :tcuo, :mcuo, :com, :tpago, :est, :fecha, :cuo, :fupago)
                                 RETURNING venta_id
                             """)
-                            fecha_actual = datetime.now()
                             res = conn.execute(sql_venta, {
                                 "p": producto_seleccionado, "c": cliente_seleccionado, "vend": vendedor, "pre": precio_final, 
                                 "tcuo": cantidad_cuotas, "mcuo": monto_cuota_input, 
-                                "com": comision, "tpago": tipo_pago, "est": estado_input, "fecha": fecha_actual
+                                "com": comision, "tpago": tipo_pago, "est": estado_input, "fecha": fecha_actual,
+                                "cuo": cuota_inicial, "fupago": fecha_u_pago
                             })
                             nuevo_id = res.fetchone()[0]
 
@@ -436,27 +475,23 @@ def render_ventas():
                     f_u_pago = pd.to_datetime(fila.get('fecha_ultimo_pago'), errors='coerce')
                     
                     if pd.isnull(f_u_pago):
-                        # Caso: Venta nueva (Sin pagos aún) -> Gris Neutro
                         color_border = "#9E9E9E"
                         badge_html = "<span style='background-color: #E0E0E0; color: #424242; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;'>⚪ NUEVA VENTA</span>"
                         txt_fecha_pago = "Sin pagos registrados"
                     elif f_u_pago < hace_un_mes and est_v.lower() == "activo":
-                        # Caso: Más de 1 mes sin pagar -> Rojo (Moroso / Atrasado)
                         color_border = "#FF4B4B"
                         badge_html = "<span style='background-color: #FFCDD2; color: #B71C1C; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;'>🔴 ATRASADO (+1 MES)</span>"
                         txt_fecha_pago = f"Último pago: {f_u_pago.strftime('%d/%m/%Y')}"
                     else:
-                        # Caso: Al día o Cancelado -> Verde / Normal
                         color_border = "#2E7D32"
                         badge_html = "<span style='background-color: #C8E6C9; color: #1B5E20; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 11px;'>🟢 AL DÍA</span>"
                         txt_fecha_pago = f"Último pago: {f_u_pago.strftime('%d/%m/%Y')}"
 
-                    # Tarjeta con borde personalizado según color de mora
                     st.markdown(f"""
                         <div style="border-left: 6px solid {color_border}; padding: 10px; border-radius: 6px; background-color: rgba(128, 128, 128, 0.05); margin-bottom: 10px;">
                     """, unsafe_allow_html=True)
 
-                    c_info, c_cuotas, c_monto, c_acciones = st.columns([2.8, 1.8, 1.8, 2.6])
+                    c_info, c_cuotas, c_monto, c_acciones = st.columns([2.5, 1.5, 1.5, 3.5])
                     
                     with c_info:
                         st.markdown(f"**Venta #{id_v}** - {prod_v} &nbsp; {badge_html}", unsafe_allow_html=True)
@@ -471,22 +506,43 @@ def render_ventas():
                         st.caption(f"Estado: **{est_v}**")
 
                     with c_acciones:
-                        btn_col1, btn_col2 = st.columns(2)
+                        btn_col1, btn_col2, btn_col3 = st.columns(3)
                         
                         # Botón 1: Ver Venta
                         with btn_col1:
                             if st.button("👁️ Ver", key=f"btn_ver_grid_{id_v}", use_container_width=True):
+                                # Limpieza preventiva de otros estados
+                                st.session_state.pop("pago_rapido_datos", None)
+                                st.session_state.pop("eliminar_venta_datos", None)
                                 st.session_state.ver_venta_id = id_v
+                                st.rerun()
 
                         # Botón 2: Pagar Cuota
                         with btn_col2:
                             pago_habilitado = (est_v.lower() == "activo" and cuota_pagada < tot_cuotas)
                             if st.button("💳 Pagar", key=f"btn_pago_grid_{id_v}", disabled=not pago_habilitado, type="primary", use_container_width=True):
+                                # Limpieza preventiva de otros estados
+                                st.session_state.pop("ver_venta_id", None)
+                                st.session_state.pop("eliminar_venta_datos", None)
                                 st.session_state.pago_rapido_datos = {
                                     "id": id_v,
                                     "producto": prod_v,
                                     "cliente": cli_v
                                 }
+                                st.rerun()
+
+                        # Botón 3: Eliminar Venta
+                        with btn_col3:
+                            if st.button("🗑️", key=f"btn_del_grid_{id_v}", use_container_width=True, help="Eliminar venta completa"):
+                                # Limpieza preventiva de otros estados
+                                st.session_state.pop("ver_venta_id", None)
+                                st.session_state.pop("pago_rapido_datos", None)
+                                st.session_state.eliminar_venta_datos = {
+                                    "id": id_v,
+                                    "producto": prod_v,
+                                    "cliente": cli_v
+                                }
+                                st.rerun()
 
                     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -495,9 +551,14 @@ def render_ventas():
                 dialog_ver_venta_completa(st.session_state.ver_venta_id)
 
             # Activar ventana emergente para Cobro Rápido
-            if "pago_rapido_datos" in st.session_state:
+            elif "pago_rapido_datos" in st.session_state:
                 datos = st.session_state.pago_rapido_datos
                 dialog_pago_rapido(datos['id'], datos['producto'], datos['cliente'])
+
+            # Activar ventana emergente para Eliminar Venta
+            elif "eliminar_venta_datos" in st.session_state:
+                datos_del = st.session_state.eliminar_venta_datos
+                dialog_eliminar_venta(datos_del['id'], datos_del['producto'], datos_del['cliente'])
 
         else:
             st.info("No hay ventas registradas aún.")
