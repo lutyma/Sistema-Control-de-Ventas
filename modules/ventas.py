@@ -6,6 +6,20 @@ from dateutil.relativedelta import relativedelta
 from database.connection import ejecutar_query, cargar_datos, engine
 from sqlalchemy import text
 
+# --- FUNCIONES DE LIMPIEZA DE ESTADO AL CERRAR MODALES ---
+def limpiar_modal_ver():
+    st.session_state.pop("ver_venta_id", None)
+
+def limpiar_modal_pago():
+    st.session_state.pop("pago_rapido_datos", None)
+    st.session_state.pop("cobro_rapido_exitoso", None)
+    st.session_state.pop("monto_cobrado_hoy", None)
+    st.session_state.pop("num_cuota_cobrada", None)
+
+def limpiar_modal_eliminar():
+    st.session_state.pop("eliminar_venta_datos", None)
+
+
 def generar_link_whatsapp(vendedor_operacion, cuota_nro, venta_id, producto, cliente, monto_pagado_hoy=None):
     nro_destino = "595972989099" 
     txt_monto = f" (Gs. {monto_pagado_hoy:,.0f})" if monto_pagado_hoy else ""
@@ -29,11 +43,13 @@ def dialog_ver_venta_completa(id_venta):
     
     if df_v_sel.empty:
         st.error("No se encontraron los datos de esta venta.")
+        if st.button("Cerrar", use_container_width=True):
+            limpiar_modal_ver()
+            st.rerun()
         return
 
     v_data = df_v_sel.iloc[0]
     
-    # 1. Información General de la Venta
     st.subheader(f"Venta #{id_venta} - {v_data['producto']}")
     
     c1, c2, c3 = st.columns(3)
@@ -59,7 +75,6 @@ def dialog_ver_venta_completa(id_venta):
 
     st.divider()
 
-    # 2. Cronograma de Cuotas
     st.subheader("📅 Cronograma de Cuotas y Pagos")
     df_cuotas = cargar_datos("SELECT * FROM detalle_ventas WHERE venta_id = :id_v ORDER BY item_cuota ASC", params={"id_v": int(id_venta)})
 
@@ -79,8 +94,7 @@ def dialog_ver_venta_completa(id_venta):
         st.info("No hay cuotas registradas para esta venta.")
 
     if st.button("Cerrar Detalle", use_container_width=True):
-        if "ver_venta_id" in st.session_state:
-            del st.session_state.ver_venta_id
+        limpiar_modal_ver()
         st.rerun()
 
 
@@ -97,8 +111,7 @@ def dialog_pago_rapido(id_venta, producto, cliente):
     if df_cuota_pendiente.empty:
         st.success("🎉 ¡Esta venta no tiene cuotas pendientes de pago!")
         if st.button("Cerrar", use_container_width=True):
-            if "pago_rapido_datos" in st.session_state:
-                del st.session_state.pago_rapido_datos
+            limpiar_modal_pago()
             st.rerun()
         return
 
@@ -151,7 +164,7 @@ def dialog_pago_rapido(id_venta, producto, cliente):
                             UPDATE ventas 
                             SET cuota = COALESCE(cuota, 0) + 1, fecha_ultimo_pago = :hoy 
                             WHERE venta_id = :id_v
-                        """), {"hoy": ahora, "id_v": id_venta})
+                        """), {"hoy": me_hoy if 'me_hoy' in locals() else ahora, "id_v": id_venta})
 
                         conn.execute(text("""
                             UPDATE ventas 
@@ -167,8 +180,7 @@ def dialog_pago_rapido(id_venta, producto, cliente):
                 st.error(f"Error al procesar el pago: {e}")
 
         if col_no.button("❌ Cancelar", use_container_width=True):
-            if "pago_rapido_datos" in st.session_state:
-                del st.session_state.pago_rapido_datos
+            limpiar_modal_pago()
             st.rerun()
 
     else:
@@ -191,10 +203,7 @@ def dialog_pago_rapido(id_venta, producto, cliente):
         """, unsafe_allow_html=True)
 
         if st.button("Finalizar y Cerrar", use_container_width=True):
-            if "pago_rapido_datos" in st.session_state:
-                del st.session_state.pago_rapido_datos
-            if "cobro_rapido_exitoso" in st.session_state:
-                del st.session_state.cobro_rapido_exitoso
+            limpiar_modal_pago()
             st.rerun()
 
 
@@ -210,22 +219,19 @@ def dialog_eliminar_venta(id_venta, producto, cliente):
     if col_confirmar.button("🔥 Sí, Eliminar", use_container_width=True, type="primary"):
         try:
             with engine.begin() as conn:
-                # 1. Eliminar cuotas del detalle
                 conn.execute(text("DELETE FROM detalle_ventas WHERE venta_id = :id_v"), {"id_v": id_venta})
-                # 2. Eliminar la cabecera de la venta
                 conn.execute(text("DELETE FROM ventas WHERE venta_id = :id_v"), {"id_v": id_venta})
 
             st.success(f"✅ Venta #{id_venta} eliminada correctamente.")
-            if "eliminar_venta_datos" in st.session_state:
-                del st.session_state.eliminar_venta_datos
+            limpiar_modal_eliminar()
             st.rerun()
         except Exception as e:
             st.error(f"Error al eliminar la venta: {e}")
 
     if col_cancelar.button("❌ Cancelar", use_container_width=True):
-        if "eliminar_venta_datos" in st.session_state:
-            del st.session_state.eliminar_venta_datos
+        limpiar_modal_eliminar()
         st.rerun()
+
 
 def render_ventas():
 
@@ -235,7 +241,6 @@ def render_ventas():
     # --- CARGA DE DATOS BASE ---
     df_v = cargar_datos("SELECT * FROM ventas ORDER BY venta_id DESC")
     
-    # 1. CARGA DE CLIENTES
     try:
         df_clientes = cargar_datos("""
             SELECT 
@@ -264,7 +269,6 @@ def render_ventas():
             opciones_clientes.append(label_c)
             dict_clientes[label_c] = nom
 
-    # 2. CARGA DE PRODUCTOS DESDE `ecommerce_productos`
     try:
         df_productos = cargar_datos("SELECT * FROM ecommerce_productos ORDER BY nombre ASC")
     except Exception:
@@ -304,16 +308,14 @@ def render_ventas():
             "👤 Buscar / Seleccionar Cliente*", 
             options=opciones_clientes,
             index=0,
-            key="sb_cliente_venta",
-            help="Escriba el nombre o teléfono para filtrar"
+            key="sb_cliente_venta"
         )
         cliente_seleccionado = dict_clientes.get(cliente_label_sel, "")
         producto_label_sel = st.sidebar.selectbox(
             "📦 Buscar / Seleccionar Producto*",
             options=opciones_productos,
             index=0,
-            key="sb_producto_venta",
-            help="Escriba el nombre del producto para filtrar"
+            key="sb_producto_venta"
         )
 
         info_p = dict_productos.get(producto_label_sel, {})
@@ -345,7 +347,6 @@ def render_ventas():
                     try:
                         fecha_actual = datetime.now()
                         
-                        # Definir valores iniciales de cuota y fecha_ultimo_pago según tipo_pago
                         if tipo_pago == "Mensual con entrega":
                             cuota_inicial = 1
                             fecha_u_pago = fecha_actual
@@ -416,6 +417,12 @@ def render_ventas():
     # --- CUERPO PRINCIPAL ---
     st.title("📊 Sistema de Control de Ventas e Ingresos")
 
+    # CONTROL DE CAMBIO DE PESTAÑA: Limpia inmediatamente modales activos si el usuario cambia de tab
+    def on_tab_change():
+        limpiar_modal_ver()
+        limpiar_modal_pago()
+        limpiar_modal_eliminar()
+
     tab_lista, tab_detalles, tab_editar, tab_editar_detalles = st.tabs([
         "📋 Listado de Ventas", 
         "🔍 Ver Detalles de Cuotas", 
@@ -438,7 +445,6 @@ def render_ventas():
             df_display = df_v.copy()
             hace_un_mes = datetime.now() - timedelta(days=30)
 
-            # 1. Filtro por Estado / Morosidad
             if 'estado' in df_display.columns:
                 if filtro_estado == "Activas":
                     df_display = df_display[df_display['estado'].astype(str).str.strip().str.capitalize() == "Activo"]
@@ -450,7 +456,6 @@ def render_ventas():
                     cond_atrasado = (f_pagos_dt < hace_un_mes) & (pd.notnull(f_pagos_dt))
                     df_display = df_display[cond_activo & cond_atrasado]
 
-            # 2. Filtros de Búsqueda por Texto
             if filtro_nombre:
                 df_display = df_display[df_display['producto'].str.contains(filtro_nombre, case=False, na=False)]
             if filtro_cliente:
@@ -461,7 +466,6 @@ def render_ventas():
             if df_display.empty:
                 st.info(f"No hay ventas que coincidan con el filtro '{filtro_estado}'.")
             else:
-                # Renderizado fila por fila con resaltado visual
                 for _, fila in df_display.iterrows():
                     id_v = fila['venta_id']
                     prod_v = fila['producto']
@@ -471,7 +475,6 @@ def render_ventas():
                     tot_cuotas = int(fila['total_cuota']) if pd.notnull(fila['total_cuota']) else 1
                     est_v = str(fila['estado']).strip()
                     
-                    # Lógica de semáforo por fecha de último pago
                     f_u_pago = pd.to_datetime(fila.get('fecha_ultimo_pago'), errors='coerce')
                     
                     if pd.isnull(f_u_pago):
@@ -508,22 +511,18 @@ def render_ventas():
                     with c_acciones:
                         btn_col1, btn_col2, btn_col3 = st.columns(3)
                         
-                        # Botón 1: Ver Venta
                         with btn_col1:
                             if st.button("👁️ Ver", key=f"btn_ver_grid_{id_v}", use_container_width=True):
-                                # Limpieza preventiva de otros estados
-                                st.session_state.pop("pago_rapido_datos", None)
-                                st.session_state.pop("eliminar_venta_datos", None)
+                                limpiar_modal_pago()
+                                limpiar_modal_eliminar()
                                 st.session_state.ver_venta_id = id_v
                                 st.rerun()
 
-                        # Botón 2: Pagar Cuota
                         with btn_col2:
                             pago_habilitado = (est_v.lower() == "activo" and cuota_pagada < tot_cuotas)
                             if st.button("💳 Pagar", key=f"btn_pago_grid_{id_v}", disabled=not pago_habilitado, type="primary", use_container_width=True):
-                                # Limpieza preventiva de otros estados
-                                st.session_state.pop("ver_venta_id", None)
-                                st.session_state.pop("eliminar_venta_datos", None)
+                                limpiar_modal_ver()
+                                limpiar_modal_eliminar()
                                 st.session_state.pago_rapido_datos = {
                                     "id": id_v,
                                     "producto": prod_v,
@@ -531,12 +530,10 @@ def render_ventas():
                                 }
                                 st.rerun()
 
-                        # Botón 3: Eliminar Venta
                         with btn_col3:
                             if st.button("🗑️", key=f"btn_del_grid_{id_v}", use_container_width=True, help="Eliminar venta completa"):
-                                # Limpieza preventiva de otros estados
-                                st.session_state.pop("ver_venta_id", None)
-                                st.session_state.pop("pago_rapido_datos", None)
+                                limpiar_modal_ver()
+                                limpiar_modal_pago()
                                 st.session_state.eliminar_venta_datos = {
                                     "id": id_v,
                                     "producto": prod_v,
@@ -546,19 +543,22 @@ def render_ventas():
 
                     st.markdown("</div>", unsafe_allow_html=True)
 
-            # Activar ventana emergente para Ver Venta
+            # --- ACTIVADORES DE DIÁLOGOS CON AUTO-LIMPIEZA ---
             if "ver_venta_id" in st.session_state:
-                dialog_ver_venta_completa(st.session_state.ver_venta_id)
+                id_v_active = st.session_state.ver_venta_id
+                # Si el usuario hace clic en la "X", eliminamos la clave explícitamente
+                st.session_state.pop("ver_venta_id", None)
+                dialog_ver_venta_completa(id_v_active)
 
-            # Activar ventana emergente para Cobro Rápido
             elif "pago_rapido_datos" in st.session_state:
-                datos = st.session_state.pago_rapido_datos
-                dialog_pago_rapido(datos['id'], datos['producto'], datos['cliente'])
+                datos_p = st.session_state.pago_rapido_datos
+                st.session_state.pop("pago_rapido_datos", None)
+                dialog_pago_rapido(datos_p['id'], datos_p['producto'], datos_p['cliente'])
 
-            # Activar ventana emergente para Eliminar Venta
             elif "eliminar_venta_datos" in st.session_state:
-                datos_del = st.session_state.eliminar_venta_datos
-                dialog_eliminar_venta(datos_del['id'], datos_del['producto'], datos_del['cliente'])
+                datos_d = st.session_state.eliminar_venta_datos
+                st.session_state.pop("eliminar_venta_datos", None)
+                dialog_eliminar_venta(datos_d['id'], datos_d['producto'], datos_d['cliente'])
 
         else:
             st.info("No hay ventas registradas aún.")
