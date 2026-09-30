@@ -495,6 +495,7 @@ def render_ventas():
                     prod_v = fila['producto']
                     cli_v = fila['cliente']
                     precio_v = float(fila['precio']) if pd.notnull(fila['precio']) else 0.0
+                    monto_c_v = float(fila['monto_cuota']) if 'monto_cuota' in fila and pd.notnull(fila['monto_cuota']) else 0.0
                     cuota_pagada = int(fila['cuota']) if pd.notnull(fila['cuota']) else 0
                     tot_cuotas = int(fila['total_cuota']) if pd.notnull(fila['total_cuota']) else 1
                     est_v = str(fila['estado']).strip()
@@ -529,8 +530,8 @@ def render_ventas():
                         st.caption(f"🗓️ {txt_fecha_pago}")
                     
                     with c_monto:
-                        st.markdown(f"**Gs. {precio_v:,.0f}**")
-                        st.caption(f"Estado: **{est_v}**")
+                        st.markdown(f"**Cuota: Gs. {monto_c_v:,.0f}**")
+                        st.caption(f"Total: Gs. {precio_v:,.0f} | {est_v}")
 
                     with c_acciones:
                         btn_col1, btn_col2, btn_col3 = st.columns(3)
