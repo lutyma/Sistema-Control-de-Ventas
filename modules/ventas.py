@@ -237,6 +237,13 @@ def render_ventas():
 
     if "usuario_actual" not in st.session_state:
         st.session_state.usuario_actual = "Sistema"
+    if "rol_usuario" not in st.session_state:
+        st.session_state.rol_usuario = "vendedor"
+
+    # --- CONTROL DE PERMISOS SEGÚN ROL ---
+    rol_actual = str(st.session_state.rol_usuario).lower()
+    es_admin = (rol_actual == "admin")
+    puede_pagar_o_eliminar = es_admin
 
     # --- CARGA DE DATOS BASE ---
     df_v = cargar_datos("SELECT * FROM ventas ORDER BY venta_id DESC")
@@ -417,12 +424,6 @@ def render_ventas():
     # --- CUERPO PRINCIPAL ---
     st.title("📊 Sistema de Control de Ventas e Ingresos")
 
-    # CONTROL DE CAMBIO DE PESTAÑA: Limpia inmediatamente modales activos si el usuario cambia de tab
-    def on_tab_change():
-        limpiar_modal_ver()
-        limpiar_modal_pago()
-        limpiar_modal_eliminar()
-
     tab_lista, tab_detalles, tab_editar, tab_editar_detalles = st.tabs([
         "📋 Listado de Ventas", 
         "🔍 Ver Detalles de Cuotas", 
@@ -519,8 +520,9 @@ def render_ventas():
                                 st.rerun()
 
                         with btn_col2:
-                            pago_habilitado = (est_v.lower() == "activo" and cuota_pagada < tot_cuotas)
-                            if st.button("💳 Pagar", key=f"btn_pago_grid_{id_v}", disabled=not pago_habilitado, type="primary", use_container_width=True):
+                            # Habilitado solo si la venta está activa Y el usuario tiene permiso (Admin)
+                            pago_habilitado = (est_v.lower() == "activo" and cuota_pagada < tot_cuotas and puede_pagar_o_eliminar)
+                            if st.button("💳 Pagar", key=f"btn_pago_grid_{id_v}", disabled=not pago_habilitado, type="primary", use_container_width=True, help="Solo Administradores" if not puede_pagar_o_eliminar else ""):
                                 limpiar_modal_ver()
                                 limpiar_modal_eliminar()
                                 st.session_state.pago_rapido_datos = {
@@ -531,7 +533,8 @@ def render_ventas():
                                 st.rerun()
 
                         with btn_col3:
-                            if st.button("🗑️", key=f"btn_del_grid_{id_v}", use_container_width=True, help="Eliminar venta completa"):
+                            # Habilitado solo para administradores
+                            if st.button("🗑️", key=f"btn_del_grid_{id_v}", use_container_width=True, disabled=not puede_pagar_o_eliminar, help="Eliminar venta (Solo Administradores)"):
                                 limpiar_modal_ver()
                                 limpiar_modal_pago()
                                 st.session_state.eliminar_venta_datos = {
@@ -546,7 +549,6 @@ def render_ventas():
             # --- ACTIVADORES DE DIÁLOGOS CON AUTO-LIMPIEZA ---
             if "ver_venta_id" in st.session_state:
                 id_v_active = st.session_state.ver_venta_id
-                # Si el usuario hace clic en la "X", eliminamos la clave explícitamente
                 st.session_state.pop("ver_venta_id", None)
                 dialog_ver_venta_completa(id_v_active)
 
@@ -589,7 +591,8 @@ def render_ventas():
                         st.write(f"Cuota N° {int(fila['item_cuota'])} - Vence: {fila['fecha_vencimiento']} - Estado: **{fila['estado']}**")
                     
                     with col_btn:
-                        esta_activo = str(fila['estado']).strip().capitalize() == "Activo"
+                        # Solo habilitado para admin si la cuota está activa
+                        esta_activo = (str(fila['estado']).strip().capitalize() == "Activo") and puede_pagar_o_eliminar
                         if st.button(f"Pagar Cuota {int(fila['item_cuota'])}", key=f"btn_pagar_{id_sel}_{fila['item_cuota']}", disabled=not esta_activo):
                             datos_venta = df_v[df_v['venta_id'] == id_sel].iloc[0]
                             st.session_state.cuota_a_pagar = {
