@@ -164,7 +164,7 @@ def dialog_pago_rapido(id_venta, producto, cliente):
                             UPDATE ventas 
                             SET cuota = COALESCE(cuota, 0) + 1, fecha_ultimo_pago = :hoy 
                             WHERE venta_id = :id_v
-                        """), {"hoy": me_hoy if 'me_hoy' in locals() else ahora, "id_v": id_venta})
+                        """), {"hoy": ahora, "id_v": id_venta})
 
                         conn.execute(text("""
                             UPDATE ventas 
@@ -251,6 +251,7 @@ def render_ventas():
     try:
         df_clientes = cargar_datos("""
             SELECT 
+                COALESCE(id_cliente, id) as id_cliente,
                 COALESCE(nombre, nombres) as nombre,
                 telefono,
                 COALESCE(documento, numero_documento) as documento
@@ -262,6 +263,8 @@ def render_ventas():
             df_clientes = cargar_datos("SELECT * FROM clientes")
             if 'nombres' in df_clientes.columns and 'nombre' not in df_clientes.columns:
                 df_clientes.rename(columns={'nombres': 'nombre'}, inplace=True)
+            if 'id' in df_clientes.columns and 'id_cliente' not in df_clientes.columns:
+                df_clientes.rename(columns={'id': 'id_cliente'}, inplace=True)
         except Exception:
             df_clientes = pd.DataFrame()
 
@@ -270,11 +273,15 @@ def render_ventas():
     dict_clientes = {}
     if not df_clientes.empty and 'nombre' in df_clientes.columns:
         for _, r in df_clientes.iterrows():
+            id_cli = int(r['id_cliente']) if 'id_cliente' in r and pd.notnull(r['id_cliente']) else None
             nom = str(r['nombre']).strip() if pd.notnull(r['nombre']) else "Sin nombre"
             tel = str(r['telefono']).strip() if 'telefono' in r and pd.notnull(r['telefono']) else ""
             label_c = f"{nom} (Tel: {tel})" if tel else nom
             opciones_clientes.append(label_c)
-            dict_clientes[label_c] = nom
+            dict_clientes[label_c] = {
+                "id_cliente": id_cli,
+                "nombre": nom
+            }
 
     try:
         df_productos = cargar_datos("SELECT * FROM ecommerce_productos ORDER BY nombre ASC")
@@ -287,6 +294,7 @@ def render_ventas():
 
     if not df_productos.empty and 'nombre' in df_productos.columns:
         for _, r in df_productos.iterrows():
+            id_p = int(r['id_producto']) if 'id_producto' in r and pd.notnull(r['id_producto']) else None
             nom_p = str(r['nombre']).strip() if pd.notnull(r['nombre']) else ""
             precio_p = float(r['precio']) if 'precio' in r and pd.notnull(r['precio']) else 0.0
             stock_p = int(r['stock']) if 'stock' in r and pd.notnull(r['stock']) else 0
@@ -296,6 +304,7 @@ def render_ventas():
             label_p = f"{nom_p} - Precio: Gs. {precio_p:,.0f} (Stock: {stock_p})"
             opciones_productos.append(label_p)
             dict_productos[label_p] = {
+                "producto_id": id_p,
                 "nombre": nom_p,
                 "precio": precio_p,
                 "stock": stock_p,
@@ -317,7 +326,10 @@ def render_ventas():
             index=0,
             key="sb_cliente_venta"
         )
-        cliente_seleccionado = dict_clientes.get(cliente_label_sel, "")
+        info_c = dict_clientes.get(cliente_label_sel, {})
+        cliente_seleccionado = info_c.get("nombre", "")
+        id_cliente_sel = info_c.get("id_cliente", None)
+
         producto_label_sel = st.sidebar.selectbox(
             "📦 Buscar / Seleccionar Producto*",
             options=opciones_productos,
@@ -327,6 +339,7 @@ def render_ventas():
 
         info_p = dict_productos.get(producto_label_sel, {})
         producto_seleccionado = info_p.get("nombre", "")
+        producto_id_sel = info_p.get("producto_id", None)
         precio_default = info_p.get("precio", 0.0)
         cuotas_default = info_p.get("cant_cuotas", 1)
         if cuotas_default < 1:
@@ -362,16 +375,26 @@ def render_ventas():
                             fecha_u_pago = None
 
                         with engine.begin() as conn:
+                            # Se insertan id_cliente y producto_id en la tabla ventas
                             sql_venta = text("""
-                                INSERT INTO ventas (producto, cliente, vendedor, precio, total_cuota, monto_cuota, comision, tipo_pago, estado, fecha_creacion, cuota, fecha_ultimo_pago)
-                                VALUES (:p, :c, :vend, :pre, :tcuo, :mcuo, :com, :tpago, :est, :fecha, :cuo, :fupago)
+                                INSERT INTO ventas (
+                                    producto, cliente, vendedor, precio, total_cuota, 
+                                    monto_cuota, comision, tipo_pago, estado, fecha_creacion, 
+                                    cuota, fecha_ultimo_pago, id_cliente, producto_id
+                                )
+                                VALUES (
+                                    :p, :c, :vend, :pre, :tcuo, 
+                                    :mcuo, :com, :tpago, :est, :fecha, 
+                                    :cuo, :fupago, :id_c, :prod_id
+                                )
                                 RETURNING venta_id
                             """)
                             res = conn.execute(sql_venta, {
                                 "p": producto_seleccionado, "c": cliente_seleccionado, "vend": vendedor, "pre": precio_final, 
                                 "tcuo": cantidad_cuotas, "mcuo": monto_cuota_input, 
                                 "com": comision, "tpago": tipo_pago, "est": estado_input, "fecha": fecha_actual,
-                                "cuo": cuota_inicial, "fupago": fecha_u_pago
+                                "cuo": cuota_inicial, "fupago": fecha_u_pago,
+                                "id_c": id_cliente_sel, "prod_id": producto_id_sel
                             })
                             nuevo_id = res.fetchone()[0]
 
@@ -520,7 +543,6 @@ def render_ventas():
                                 st.rerun()
 
                         with btn_col2:
-                            # Habilitado solo si la venta está activa Y el usuario tiene permiso (Admin)
                             pago_habilitado = (est_v.lower() == "activo" and cuota_pagada < tot_cuotas and puede_pagar_o_eliminar)
                             if st.button("💳 Pagar", key=f"btn_pago_grid_{id_v}", disabled=not pago_habilitado, type="primary", use_container_width=True, help="Solo Administradores" if not puede_pagar_o_eliminar else ""):
                                 limpiar_modal_ver()
@@ -533,7 +555,6 @@ def render_ventas():
                                 st.rerun()
 
                         with btn_col3:
-                            # Habilitado solo para administradores
                             if st.button("🗑️", key=f"btn_del_grid_{id_v}", use_container_width=True, disabled=not puede_pagar_o_eliminar, help="Eliminar venta (Solo Administradores)"):
                                 limpiar_modal_ver()
                                 limpiar_modal_pago()
@@ -546,7 +567,6 @@ def render_ventas():
 
                     st.markdown("</div>", unsafe_allow_html=True)
 
-            # --- ACTIVADORES DE DIÁLOGOS CON AUTO-LIMPIEZA ---
             if "ver_venta_id" in st.session_state:
                 id_v_active = st.session_state.ver_venta_id
                 st.session_state.pop("ver_venta_id", None)
@@ -591,7 +611,6 @@ def render_ventas():
                         st.write(f"Cuota N° {int(fila['item_cuota'])} - Vence: {fila['fecha_vencimiento']} - Estado: **{fila['estado']}**")
                     
                     with col_btn:
-                        # Solo habilitado para admin si la cuota está activa
                         esta_activo = (str(fila['estado']).strip().capitalize() == "Activo") and puede_pagar_o_eliminar
                         if st.button(f"Pagar Cuota {int(fila['item_cuota'])}", key=f"btn_pagar_{id_sel}_{fila['item_cuota']}", disabled=not esta_activo):
                             datos_venta = df_v[df_v['venta_id'] == id_sel].iloc[0]
@@ -672,21 +691,34 @@ def render_ventas():
     with tab_editar:
         st.subheader("✏️ Modificar Información de Venta")
         if not df_v.empty:
-            id_edit = st.selectbox("Elija el ID del producto a editar:", df_v['venta_id'], key="edit_sel")
+            id_edit = st.selectbox("Elija el ID de la venta a editar:", df_v['venta_id'], key="edit_sel")
             fila_actual = df_v[df_v['venta_id'] == id_edit].iloc[0]
             obs_actual = str(fila_actual['observacion']) if 'observacion' in fila_actual and pd.notnull(fila_actual['observacion']) else ""
             
+            # Buscar el label actual del cliente según id_cliente o nombre guardado
+            cliente_actual_nom = str(fila_actual['cliente']).strip() if pd.notnull(fila_actual['cliente']) else ""
+            id_cliente_actual_v = int(fila_actual['id_cliente']) if 'id_cliente' in fila_actual and pd.notnull(fila_actual['id_cliente']) else None
+            
+            idx_cliente_select = 0
+            if dict_clientes:
+                for idx, (lbl, datos_c) in enumerate(dict_clientes.items(), start=1):
+                    if id_cliente_actual_v and datos_c.get("id_cliente") == id_cliente_actual_v:
+                        idx_cliente_select = idx
+                        break
+                    elif datos_c.get("nombre") == cliente_actual_nom:
+                        idx_cliente_select = idx
+                        break
+
             with st.form("form_edicion"):
                 col1, col2 = st.columns(2)
                 with col1:
                     nuevo_prod = st.text_input("Producto", value=fila_actual['producto'])
                     
-                    lista_nombres = list(dict_clientes.values())
-                    if lista_nombres and fila_actual['cliente'] in lista_nombres:
-                        idx_cliente_actual = lista_nombres.index(fila_actual['cliente'])
-                        nuevo_clie = st.selectbox("Cliente", options=lista_nombres, index=idx_cliente_actual)
+                    if len(opciones_clientes) > 1:
+                        cliente_lbl_edit = st.selectbox("Cliente*", options=opciones_clientes, index=idx_cliente_select, key=f"sb_edit_cli_{id_edit}")
                     else:
-                        nuevo_clie = st.text_input("Cliente", value=fila_actual['cliente'])
+                        cliente_lbl_edit = PLACEHOLDER_CLIENTE
+                        st.text_input("Cliente", value=cliente_actual_nom, disabled=True)
                         
                     nuevo_precio = st.number_input("Precio", value=float(fila_actual['precio'] if fila_actual['precio'] else 0))
                 
@@ -703,17 +735,24 @@ def render_ventas():
                 nueva_obs = st.text_input("Observación", value=obs_actual, max_chars=50, help="Máximo 50 caracteres")
 
                 if st.form_submit_button("Guardar Cambios"):
-                    sql_update = """
-                        UPDATE ventas 
-                        SET producto=:p, cliente=:c, precio=:pre, cuota=:cuo, estado=:e, observacion=:obs
-                        WHERE venta_id=:id
-                    """
-                    ejecutar_query(sql_update, {
-                        "p": nuevo_prod, "c": nuevo_clie, "pre": nuevo_precio, 
-                        "cuo": nueva_cuota, "e": nuevo_est, "obs": nueva_obs, "id": id_edit
-                    })
-                    st.success(f"✅ Venta #{id_edit} actualizada correctamente")
-                    st.rerun()
+                    if cliente_lbl_edit == PLACEHOLDER_CLIENTE:
+                        st.error("❌ Debe seleccionar un cliente registrado válido.")
+                    else:
+                        info_c_edit = dict_clientes.get(cliente_lbl_edit, {})
+                        nuevo_clie_nom = info_c_edit.get("nombre", cliente_actual_nom)
+                        nuevo_clie_id = info_c_edit.get("id_cliente", id_cliente_actual_v)
+
+                        sql_update = """
+                            UPDATE ventas 
+                            SET producto=:p, cliente=:c, id_cliente=:id_c, precio=:pre, cuota=:cuo, estado=:e, observacion=:obs
+                            WHERE venta_id=:id
+                        """
+                        ejecutar_query(sql_update, {
+                            "p": nuevo_prod, "c": nuevo_clie_nom, "id_c": nuevo_clie_id, "pre": nuevo_precio, 
+                            "cuo": nueva_cuota, "e": nuevo_est, "obs": nueva_obs, "id": id_edit
+                        })
+                        st.success(f"✅ Venta #{id_edit} actualizada correctamente")
+                        st.rerun()
 
     # --- PESTAÑA 4: EDICIÓN DE DETALLES (CUOTAS) ---
     with tab_editar_detalles:

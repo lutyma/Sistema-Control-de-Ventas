@@ -37,7 +37,6 @@ def render_ecommerce():
         df_display = df_prods.copy()
 
         if not df_display.empty:
-            # Aplicar filtros
             if busqueda:
                 df_display = df_display[df_display['nombre'].str.contains(busqueda, case=False, na=False)]
             if cat_sel != "Todas":
@@ -45,7 +44,6 @@ def render_ecommerce():
             if marca_sel != "Todas":
                 df_display = df_display[df_display['marca'] == marca_sel]
 
-            # Ordenamiento
             if orden == "Menor Precio Contado":
                 df_display = df_display.sort_values(by="precio", ascending=True)
             elif orden == "Mayor Precio Contado":
@@ -55,15 +53,12 @@ def render_ecommerce():
 
             st.write(f"Showing **{len(df_display)}** productos:")
 
-            # Renderizado de Tarjetas de Productos
             cols_grid = st.columns(3)
             for i, (_, row) in enumerate(df_display.iterrows()):
                 col_curr = cols_grid[i % 3]
                 with col_curr:
                     with st.container(border=True):
                         img_url = row['imagen_url'] if pd.notnull(row['imagen_url']) and str(row['imagen_url']).startswith("http") else "https://via.placeholder.com/300x200?text=Sin+Imagen"
-                        #st.image(img_url, use_column_width=True)
-                        # ✅ LÍNEA CORREGIDA
                         st.image(img_url, use_container_width=True)
                         st.markdown(f"**{row['nombre']}**")
                         
@@ -82,6 +77,28 @@ def render_ecommerce():
                             st.caption("❌ Agotado")
         else:
             st.info("No hay productos disponibles en el catálogo.")
+
+# =============================================================================
+# DIÁLOGO DE ELIMINACIÓN DE PRODUCTO
+# =============================================================================
+@st.dialog("⚠️ Confirmar Eliminación de Producto")
+def dialog_eliminar_producto(id_prod, nombre_prod):
+    st.warning(f"¿Está seguro de que desea eliminar el producto **{nombre_prod}** (ID: {id_prod})?")
+    st.error("🚨 Esta acción eliminará permanentemente el producto del catálogo.")
+
+    c_conf, c_canc = st.columns(2)
+    if c_conf.button("🔥 Sí, Eliminar", use_container_width=True, type="primary"):
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("DELETE FROM ecommerce_productos WHERE id_producto = :id"), {"id": id_prod})
+            st.success(f"✅ Producto '{nombre_prod}' eliminado correctamente.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al eliminar producto: {e}")
+
+    if c_canc.button("❌ Cancelar", use_container_width=True):
+        st.rerun()
+
 # =============================================================================
 # 2. GESTIÓN DE PRODUCTOS (Paramétrico -> Submódulo)
 # =============================================================================
@@ -94,7 +111,6 @@ def render_gestion_productos():
         "📋 Lista de Productos"
     ])
     
-    # Cargar datos actualizados de productos
     try:
         df_prods = cargar_datos("SELECT * FROM ecommerce_productos ORDER BY id_producto DESC")
     except Exception:
@@ -194,10 +210,48 @@ def render_gestion_productos():
                         st.error(f"Error al actualizar producto: {e}")
         else:
             st.info("No hay productos para modificar.")
-    # --- PESTAÑA 3: LISTA GENERAL DE PRODUCTOS ---
+
+    # --- PESTAÑA 3: LISTA GENERAL DE PRODUCTOS CON ELIMINACIÓN ---
     with tab_tabla:
         st.subheader("📋 Catálogo de Productos Registrados")
         if not df_prods.empty:
-            st.dataframe(df_prods, use_container_width=True)
+            df_v_activas = cargar_datos("SELECT producto_id, producto FROM ventas WHERE LOWER(TRIM(estado)) = 'activo'")
+
+            for _, row_p in df_prods.iterrows():
+                id_p = int(row_p['id_producto']) if pd.notnull(row_p['id_producto']) else 0
+                nom_p = str(row_p['nombre']) if pd.notnull(row_p['nombre']) else "-"
+                precio_p = float(row_p['precio']) if pd.notnull(row_p['precio']) else 0.0
+                stock_p = int(row_p['stock']) if pd.notnull(row_p['stock']) else 0
+                est_p = str(row_p['estado']) if 'estado' in row_p and pd.notnull(row_p['estado']) else "Activo"
+
+                tiene_venta_activa = False
+                cant_ventas_act = 0
+                if not df_v_activas.empty:
+                    cond_id = (df_v_activas['producto_id'] == id_p) if 'producto_id' in df_v_activas.columns else False
+                    cond_nom = (df_v_activas['producto'].astype(str).str.strip().str.lower() == nom_p.strip().lower())
+                    ventas_match = df_v_activas[cond_id | cond_nom]
+                    cant_ventas_act = len(ventas_match)
+                    tiene_venta_activa = cant_ventas_act > 0
+
+                c1, c2, c3, c4 = st.columns([1, 3, 3, 1])
+                with c1:
+                    st.write(f"**ID:** {id_p}")
+                with c2:
+                    st.write(f"📦 **{nom_p}**")
+                with c3:
+                    st.caption(f"💰 Precio: Gs. {precio_p:,.0f} | Stock: {stock_p} | Estado: {est_p}")
+                with c4:
+                    if tiene_venta_activa:
+                        st.button(
+                            "🗑️", 
+                            key=f"btn_del_prod_{id_p}", 
+                            disabled=True, 
+                            help=f"No se puede eliminar: está asociado a {cant_ventas_act} venta(s) activa(s)."
+                        )
+                    else:
+                        if st.button("🗑️", key=f"btn_del_prod_{id_p}", help="Eliminar producto"):
+                            dialog_eliminar_producto(id_p, nom_p)
+
+                st.divider()
         else:
             st.info("No hay productos registrados en la base de datos.")
