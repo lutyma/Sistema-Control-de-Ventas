@@ -100,7 +100,11 @@ def dialog_ver_venta_completa(id_venta):
 
 # --- DIÁLOGO 2: PAGO RÁPIDO DESDE HISTORIAL ---
 @st.dialog("💳 Cobro Rápido de Cuota")
-def dialog_pago_rapido(id_venta, producto, cliente):
+def dialog_pago_rapido(datos_pago):
+    id_venta = datos_pago['id']
+    producto = datos_pago['producto']
+    cliente = datos_pago['cliente']
+
     df_cuota_pendiente = cargar_datos("""
         SELECT * FROM detalle_ventas 
         WHERE venta_id = :id_v AND (estado = 'Activo' OR estado IS NULL OR saldo_cuota > 0)
@@ -202,6 +206,7 @@ def dialog_pago_rapido(id_venta, producto, cliente):
             </a>
         """, unsafe_allow_html=True)
 
+        st.info("Una vez enviado el mensaje, presiona el botón para finalizar.")
         if st.button("Finalizar y Cerrar", use_container_width=True):
             limpiar_modal_pago()
             st.rerun()
@@ -568,20 +573,19 @@ def render_ventas():
 
                     st.markdown("</div>", unsafe_allow_html=True)
 
+            # --- INVOCACIÓN PERSISTENTE DE DIÁLOGOS ---
             if "ver_venta_id" in st.session_state:
-                id_v_active = st.session_state.ver_venta_id
-                st.session_state.pop("ver_venta_id", None)
-                dialog_ver_venta_completa(id_v_active)
+                dialog_ver_venta_completa(st.session_state.ver_venta_id)
 
             elif "pago_rapido_datos" in st.session_state:
-                datos_p = st.session_state.pago_rapido_datos
-                st.session_state.pop("pago_rapido_datos", None)
-                dialog_pago_rapido(datos_p['id'], datos_p['producto'], datos_p['cliente'])
+                dialog_pago_rapido(st.session_state.pago_rapido_datos)
 
             elif "eliminar_venta_datos" in st.session_state:
-                datos_d = st.session_state.eliminar_venta_datos
-                st.session_state.pop("eliminar_venta_datos", None)
-                dialog_eliminar_venta(datos_d['id'], datos_d['producto'], datos_d['cliente'])
+                dialog_eliminar_venta(
+                    st.session_state.eliminar_venta_datos['id'],
+                    st.session_state.eliminar_venta_datos['producto'],
+                    st.session_state.eliminar_venta_datos['cliente']
+                )
 
         else:
             st.info("No hay ventas registradas aún.")
@@ -696,7 +700,6 @@ def render_ventas():
             fila_actual = df_v[df_v['venta_id'] == id_edit].iloc[0]
             obs_actual = str(fila_actual['observacion']) if 'observacion' in fila_actual and pd.notnull(fila_actual['observacion']) else ""
             
-            # Buscar el label actual del cliente según id_cliente o nombre guardado
             cliente_actual_nom = str(fila_actual['cliente']).strip() if pd.notnull(fila_actual['cliente']) else ""
             id_cliente_actual_v = int(fila_actual['id_cliente']) if 'id_cliente' in fila_actual and pd.notnull(fila_actual['id_cliente']) else None
             
