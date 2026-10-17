@@ -6,7 +6,7 @@ from dateutil.relativedelta import relativedelta
 from database.connection import ejecutar_query, cargar_datos, engine
 from sqlalchemy import text
 
-# --- FUNCIONES DE LIMPIEZA DE ESTADO AL CERRAR MODALES ---
+# --- FUNCIONES DE LIMPIEZA DE ESTADO ---
 def limpiar_modal_ver():
     st.session_state.pop("ver_venta_id", None)
 
@@ -98,37 +98,31 @@ def dialog_ver_venta_completa(id_venta):
         st.rerun()
 
 
-# --- DIÁLOGO 2: PAGO RÁPIDO DESDE HISTORIAL ---
+# --- DIÁLOGO 2: PAGO RÁPIDO DESDE HISTORIAL (GRILLA) ---
 @st.dialog("💳 Cobro Rápido de Cuota")
-def dialog_pago_rapido(datos_pago):
-    id_venta = datos_pago['id']
-    producto = datos_pago['producto']
-    cliente = datos_pago['cliente']
+def dialog_pago_rapido(id_venta, producto, cliente):
+    # Si la bandera de éxito aún no existe, estamos en el paso de cobro
+    if not st.session_state.get("cobro_rapido_exitoso", False):
+        df_cuota_pendiente = cargar_datos("""
+            SELECT * FROM detalle_ventas 
+            WHERE venta_id = :id_v AND (estado = 'Activo' OR estado IS NULL OR saldo_cuota > 0)
+            ORDER BY item_cuota ASC 
+            LIMIT 1
+        """, params={"id_v": int(id_venta)})
 
-    df_cuota_pendiente = cargar_datos("""
-        SELECT * FROM detalle_ventas 
-        WHERE venta_id = :id_v AND (estado = 'Activo' OR estado IS NULL OR saldo_cuota > 0)
-        ORDER BY item_cuota ASC 
-        LIMIT 1
-    """, params={"id_v": int(id_venta)})
+        if df_cuota_pendiente.empty:
+            st.success("🎉 ¡Esta venta no tiene cuotas pendientes de pago!")
+            if st.button("Cerrar", use_container_width=True):
+                limpiar_modal_pago()
+                st.rerun()
+            return
 
-    if df_cuota_pendiente.empty:
-        st.success("🎉 ¡Esta venta no tiene cuotas pendientes de pago!")
-        if st.button("Cerrar", use_container_width=True):
-            limpiar_modal_pago()
-            st.rerun()
-        return
+        cuota = df_cuota_pendiente.iloc[0]
+        num_cuota = int(cuota['item_cuota'])
+        monto_cuota = float(cuota['monto_cuota']) if pd.notnull(cuota['monto_cuota']) else 0.0
+        monto_pago_prev = float(cuota['monto_pago']) if pd.notnull(cuota['monto_pago']) else 0.0
+        saldo_actual = float(cuota['saldo_cuota']) if pd.notnull(cuota['saldo_cuota']) and float(cuota['saldo_cuota']) > 0 else monto_cuota
 
-    cuota = df_cuota_pendiente.iloc[0]
-    num_cuota = int(cuota['item_cuota'])
-    monto_cuota = float(cuota['monto_cuota']) if pd.notnull(cuota['monto_cuota']) else 0.0
-    monto_pago_prev = float(cuota['monto_pago']) if pd.notnull(cuota['monto_pago']) else 0.0
-    saldo_actual = float(cuota['saldo_cuota']) if pd.notnull(cuota['saldo_cuota']) and float(cuota['saldo_cuota']) > 0 else monto_cuota
-
-    if "cobro_rapido_exitoso" not in st.session_state:
-        st.session_state.cobro_rapido_exitoso = False
-
-    if not st.session_state.cobro_rapido_exitoso:
         st.markdown(f"**Venta #:** {id_venta} | **Cliente:** {cliente}")
         st.markdown(f"**Producto:** {producto}")
         st.info(f"📌 **Cuota a Pagar:** N° {num_cuota} | **Saldo Pendiente:** Gs. {saldo_actual:,.0f}")
@@ -176,6 +170,7 @@ def dialog_pago_rapido(datos_pago):
                             WHERE venta_id = :id_v AND cuota >= total_cuota
                         """), {"id_v": id_venta})
 
+                # Marcar el cobro como exitoso para mostrar inmediatamente la pantalla de WhatsApp
                 st.session_state.cobro_rapido_exitoso = True
                 st.session_state.monto_cobrado_hoy = monto_a_cobrar
                 st.session_state.num_cuota_cobrada = num_cuota
@@ -188,15 +183,18 @@ def dialog_pago_rapido(datos_pago):
             st.rerun()
 
     else:
-        st.success(f"🎉 ¡Pago de Gs. {st.session_state.monto_cobrado_hoy:,.0f} registrado con éxito!")
+        # PANTALLA DE COMPROBANTE WHATSAPP
+        monto_cb = st.session_state.get("monto_cobrado_hoy", 0.0)
+        cuota_cb = st.session_state.get("num_cuota_cobrada", 1)
+        st.success(f"🎉 ¡Pago de Gs. {monto_cb:,.0f} registrado con éxito!")
         
         link_wa = generar_link_whatsapp(
             st.session_state.usuario_actual,
-            st.session_state.num_cuota_cobrada,
+            cuota_cb,
             id_venta,
             producto,
             cliente,
-            st.session_state.monto_cobrado_hoy
+            monto_cb
         )
         st.markdown(f"""
             <a href="{link_wa}" target="_blank" style="text-decoration: none;">
@@ -253,6 +251,7 @@ def render_ventas():
     # --- CARGA DE DATOS BASE ---
     df_v = cargar_datos("SELECT * FROM ventas ORDER BY venta_id DESC")
     
+    # 1. Cargar Clientes
     try:
         df_clientes = cargar_datos("""
             SELECT 
@@ -288,6 +287,28 @@ def render_ventas():
                 "nombre": nom
             }
 
+    # 2. Cargar Vendedores
+    try:
+        df_vendedores = cargar_datos("SELECT * FROM vendedores WHERE estado = 'Activo' ORDER BY nombre ASC")
+    except Exception:
+        df_vendedores = pd.DataFrame()
+
+    PLACEHOLDER_VENDEDOR = "-- Seleccione un Vendedor --"
+    opciones_vendedores = [PLACEHOLDER_VENDEDOR]
+    dict_vendedores = {}
+    if not df_vendedores.empty:
+        for _, r in df_vendedores.iterrows():
+            id_vend = int(r['id_vendedor'])
+            nom_v = str(r['nombre']).strip()
+            tel_v = str(r['telefono']).strip()
+            label_v = f"{nom_v} (Tel: {tel_v})"
+            opciones_vendedores.append(label_v)
+            dict_vendedores[label_v] = {
+                "id_vendedor": id_vend,
+                "nombre": nom_v
+            }
+
+    # 3. Cargar Productos
     try:
         df_productos = cargar_datos("SELECT * FROM ecommerce_productos ORDER BY nombre ASC")
     except Exception:
@@ -296,6 +317,7 @@ def render_ventas():
     PLACEHOLDER_PRODUCTO = "-- Seleccione un Producto --"
     opciones_productos = [PLACEHOLDER_PRODUCTO]
     dict_productos = {}
+    index_producto_sel = 0
 
     if not df_productos.empty and 'nombre' in df_productos.columns:
         for _, r in df_productos.iterrows():
@@ -305,6 +327,7 @@ def render_ventas():
             stock_p = int(r['stock']) if 'stock' in r and pd.notnull(r['stock']) else 0
             cant_cuotas_p = int(r['cant_cuotas']) if 'cant_cuotas' in r and pd.notnull(r['cant_cuotas']) else 12
             monto_cuota_p = float(r['monto_cuota']) if 'monto_cuota' in r and pd.notnull(r['monto_cuota']) else 0.0
+            comision_p = float(r['comision_vendedor']) if 'comision_vendedor' in r and pd.notnull(r['comision_vendedor']) else 0.0
             
             label_p = f"{nom_p} - Precio: Gs. {precio_p:,.0f} (Stock: {stock_p})"
             opciones_productos.append(label_p)
@@ -314,14 +337,22 @@ def render_ventas():
                 "precio": precio_p,
                 "stock": stock_p,
                 "cant_cuotas": cant_cuotas_p,
-                "monto_cuota": monto_cuota_p
+                "monto_cuota": monto_cuota_p,
+                "comision": comision_p
             }
+
+            if "producto_desde_ecom" in st.session_state:
+                p_ecom = st.session_state.producto_desde_ecom
+                if id_p == p_ecom.get("id_producto"):
+                    index_producto_sel = len(opciones_productos) - 1
 
     # --- BARRA LATERAL: REGISTRO DE VENTAS ---
     st.sidebar.header("🆕 Registrar Nueva Venta")
 
     if len(opciones_clientes) == 1:
         st.sidebar.warning("⚠️ No hay clientes registrados. Vaya al menú '⚙️ Paramétrico -> 👤 Gestión de Clientes' para registrar uno.")
+    elif len(opciones_vendedores) == 1:
+        st.sidebar.warning("⚠️ No hay vendedores registrados. Vaya al menú '⚙️ Paramétrico -> 👔 Gestión de Vendedores' para registrar uno.")
     elif len(opciones_productos) == 1:
         st.sidebar.warning("⚠️ No hay productos registrados. Vaya al menú '⚙️ Paramétrico -> 📦 Gestión de Productos' para registrar productos.")
     else:
@@ -335,10 +366,20 @@ def render_ventas():
         cliente_seleccionado = info_c.get("nombre", "")
         id_cliente_sel = info_c.get("id_cliente", None)
 
+        vendedor_label_sel = st.sidebar.selectbox(
+            "👔 Buscar / Seleccionar Vendedor*", 
+            options=opciones_vendedores,
+            index=0,
+            key="sb_vendedor_venta"
+        )
+        info_v = dict_vendedores.get(vendedor_label_sel, {})
+        vendedor_seleccionado = info_v.get("nombre", "")
+        id_vendedor_sel = info_v.get("id_vendedor", None)
+
         producto_label_sel = st.sidebar.selectbox(
             "📦 Buscar / Seleccionar Producto*",
             options=opciones_productos,
-            index=0,
+            index=index_producto_sel,
             key="sb_producto_venta"
         )
 
@@ -350,13 +391,13 @@ def render_ventas():
         if cuotas_default < 1:
             cuotas_default = 1
         monto_cuota_default = info_p.get("monto_cuota", 0.0)
+        comision_default = info_p.get("comision", 0.0)
 
         with st.sidebar.form("form_registro", clear_on_submit=True):
-            vendedor = st.text_input("Vendedor*", value=st.session_state.get("usuario_actual", ""))
             precio_final = st.number_input("Precio Total Venta*", min_value=0.0, value=precio_default, format="%.2f")
             cantidad_cuotas = st.number_input("Cantidad de Cuotas*", min_value=1, value=int(cuotas_default), step=1)
             monto_cuota_input = st.number_input("Monto por Cuota*", min_value=0.0, value=monto_cuota_default, format="%.2f")
-            comision = st.number_input("Comisión*", min_value=0.0, format="%.2f")
+            comision = st.number_input("Comisión Vendedor*", min_value=0.0, value=comision_default, format="%.2f")
             
             tipo_pago = st.selectbox("Tipo de Pago*", ["Mensual con entrega", "Mensual sin entrega", "Semanal"])
             estado_input = st.selectbox("Estado*", ["Activo", "Cancelado"])
@@ -366,9 +407,11 @@ def render_ventas():
             if btn_crear:
                 if cliente_label_sel == PLACEHOLDER_CLIENTE or not cliente_seleccionado:
                     st.sidebar.error("❌ Debe seleccionar un cliente registrado válido.")
+                elif vendedor_label_sel == PLACEHOLDER_VENDEDOR or not vendedor_seleccionado:
+                    st.sidebar.error("❌ Debe seleccionar un vendedor registrado válido.")
                 elif producto_label_sel == PLACEHOLDER_PRODUCTO or not producto_seleccionado:
                     st.sidebar.error("❌ Debe seleccionar un producto registrado válido.")
-                elif vendedor and precio_final > 0 and cantidad_cuotas > 0:
+                elif precio_final > 0 and cantidad_cuotas > 0:
                     try:
                         fecha_actual = datetime.now()
                         
@@ -380,26 +423,25 @@ def render_ventas():
                             fecha_u_pago = None
 
                         with engine.begin() as conn:
-                            # Se insertan id_cliente y producto_id en la tabla ventas
                             sql_venta = text("""
                                 INSERT INTO ventas (
                                     producto, cliente, vendedor, precio, total_cuota, 
                                     monto_cuota, comision, tipo_pago, estado, fecha_creacion, 
-                                    cuota, fecha_ultimo_pago, id_cliente, producto_id
+                                    cuota, fecha_ultimo_pago, id_cliente, producto_id, id_vendedor
                                 )
                                 VALUES (
                                     :p, :c, :vend, :pre, :tcuo, 
                                     :mcuo, :com, :tpago, :est, :fecha, 
-                                    :cuo, :fupago, :id_c, :prod_id
+                                    :cuo, :fupago, :id_c, :prod_id, :id_v
                                 )
                                 RETURNING venta_id
                             """)
                             res = conn.execute(sql_venta, {
-                                "p": producto_seleccionado, "c": cliente_seleccionado, "vend": vendedor, "pre": precio_final, 
+                                "p": producto_seleccionado, "c": cliente_seleccionado, "vend": vendedor_seleccionado, "pre": precio_final, 
                                 "tcuo": cantidad_cuotas, "mcuo": monto_cuota_input, 
                                 "com": comision, "tpago": tipo_pago, "est": estado_input, "fecha": fecha_actual,
                                 "cuo": cuota_inicial, "fupago": fecha_u_pago,
-                                "id_c": id_cliente_sel, "prod_id": producto_id_sel
+                                "id_c": id_cliente_sel, "prod_id": producto_id_sel, "id_v": id_vendedor_sel
                             })
                             nuevo_id = res.fetchone()[0]
 
@@ -442,6 +484,7 @@ def render_ventas():
                                     "fv": vencimiento, "fp": pago
                                 })
 
+                        st.session_state.pop("producto_desde_ecom", None)
                         st.sidebar.success(f"✅ Venta #{nuevo_id} procesada exitosamente.")
                         st.rerun()
                     except Exception as e:
@@ -459,7 +502,7 @@ def render_ventas():
         "💳 Modificar Cuota"
     ])
 
-    # --- PESTAÑA 1: LISTADO GENERAL CON FILTROS Y RESALTADO DE MOROSIDAD ---
+    # --- PESTAÑA 1: LISTADO GENERAL CON FILTROS ---
     with tab_lista:
         st.subheader("📋 Historial de Ventas")
         if not df_v.empty:
@@ -528,7 +571,7 @@ def render_ventas():
                     
                     with c_info:
                         st.markdown(f"**Venta #{id_v}** - {prod_v} &nbsp; {badge_html}", unsafe_allow_html=True)
-                        st.caption(f"👤 Cliente: **{cli_v}** | Vendedor: {fila.get('vendedor', '-')}")
+                        st.caption(f"👤 Cliente: **{cli_v}** | 👔 Vendedor: {fila.get('vendedor', '-')}")
                     
                     with c_cuotas:
                         st.markdown(f"**Cuotas:** {cuota_pagada} / {tot_cuotas}")
@@ -553,6 +596,8 @@ def render_ventas():
                             if st.button("💳 Pagar", key=f"btn_pago_grid_{id_v}", disabled=not pago_habilitado, type="primary", use_container_width=True, help="Solo Administradores" if not puede_pagar_o_eliminar else ""):
                                 limpiar_modal_ver()
                                 limpiar_modal_eliminar()
+                                # LIMPIAR CUALQUIER ESTADO RESIDUAL DE COBRO ANTERIOR ANTES DE ABRIR EL NUEVO PAGO
+                                limpiar_modal_pago()
                                 st.session_state.pago_rapido_datos = {
                                     "id": id_v,
                                     "producto": prod_v,
@@ -573,19 +618,23 @@ def render_ventas():
 
                     st.markdown("</div>", unsafe_allow_html=True)
 
-            # --- INVOCACIÓN PERSISTENTE DE DIÁLOGOS ---
+            # --- INVOCACIÓN DIRECTA DE DIÁLOGOS SIN ANIDAMIENTO ---
             if "ver_venta_id" in st.session_state:
-                dialog_ver_venta_completa(st.session_state.ver_venta_id)
+                id_v_active = st.session_state.ver_venta_id
+                st.session_state.pop("ver_venta_id", None)
+                dialog_ver_venta_completa(id_v_active)
 
             elif "pago_rapido_datos" in st.session_state:
-                dialog_pago_rapido(st.session_state.pago_rapido_datos)
+                datos_p = st.session_state.pago_rapido_datos
+                dialog_pago_rapido(datos_p['id'], datos_p['producto'], datos_p['cliente'])
+                # Si el diálogo se cerró con la "X", limpiamos el estado automáticamente al recargar
+                if "pago_rapido_datos" in st.session_state:
+                    limpiar_modal_pago()
 
             elif "eliminar_venta_datos" in st.session_state:
-                dialog_eliminar_venta(
-                    st.session_state.eliminar_venta_datos['id'],
-                    st.session_state.eliminar_venta_datos['producto'],
-                    st.session_state.eliminar_venta_datos['cliente']
-                )
+                datos_d = st.session_state.eliminar_venta_datos
+                st.session_state.pop("eliminar_venta_datos", None)
+                dialog_eliminar_venta(datos_d['id'], datos_d['producto'], datos_d['cliente'])
 
         else:
             st.info("No hay ventas registradas aún.")
@@ -703,6 +752,10 @@ def render_ventas():
             cliente_actual_nom = str(fila_actual['cliente']).strip() if pd.notnull(fila_actual['cliente']) else ""
             id_cliente_actual_v = int(fila_actual['id_cliente']) if 'id_cliente' in fila_actual and pd.notnull(fila_actual['id_cliente']) else None
             
+            vendedor_actual_nom = str(fila_actual['vendedor']).strip() if pd.notnull(fila_actual['vendedor']) else ""
+            id_vendedor_actual_v = int(fila_actual['id_vendedor']) if 'id_vendedor' in fila_actual and pd.notnull(fila_actual['id_vendedor']) else None
+
+            # Index Cliente
             idx_cliente_select = 0
             if dict_clientes:
                 for idx, (lbl, datos_c) in enumerate(dict_clientes.items(), start=1):
@@ -711,6 +764,17 @@ def render_ventas():
                         break
                     elif datos_c.get("nombre") == cliente_actual_nom:
                         idx_cliente_select = idx
+                        break
+
+            # Index Vendedor
+            idx_vendedor_select = 0
+            if dict_vendedores:
+                for idx, (lbl, datos_v) in enumerate(dict_vendedores.items(), start=1):
+                    if id_vendedor_actual_v and datos_v.get("id_vendedor") == id_vendedor_actual_v:
+                        idx_vendedor_select = idx
+                        break
+                    elif datos_v.get("nombre") == vendedor_actual_nom:
+                        idx_vendedor_select = idx
                         break
 
             with st.form("form_edicion"):
@@ -722,8 +786,12 @@ def render_ventas():
                         cliente_lbl_edit = st.selectbox("Cliente*", options=opciones_clientes, index=idx_cliente_select, key=f"sb_edit_cli_{id_edit}")
                     else:
                         cliente_lbl_edit = PLACEHOLDER_CLIENTE
-                        st.text_input("Cliente", value=cliente_actual_nom, disabled=True)
                         
+                    if len(opciones_vendedores) > 1:
+                        vendedor_lbl_edit = st.selectbox("Vendedor*", options=opciones_vendedores, index=idx_vendedor_select, key=f"sb_edit_vend_{id_edit}")
+                    else:
+                        vendedor_lbl_edit = PLACEHOLDER_VENDEDOR
+
                     nuevo_precio = st.number_input("Precio", value=float(fila_actual['precio'] if fila_actual['precio'] else 0))
                 
                 with col2:
@@ -741,18 +809,25 @@ def render_ventas():
                 if st.form_submit_button("Guardar Cambios"):
                     if cliente_lbl_edit == PLACEHOLDER_CLIENTE:
                         st.error("❌ Debe seleccionar un cliente registrado válido.")
+                    elif vendedor_lbl_edit == PLACEHOLDER_VENDEDOR:
+                        st.error("❌ Debe seleccionar un vendedor registrado válido.")
                     else:
                         info_c_edit = dict_clientes.get(cliente_lbl_edit, {})
                         nuevo_clie_nom = info_c_edit.get("nombre", cliente_actual_nom)
                         nuevo_clie_id = info_c_edit.get("id_cliente", id_cliente_actual_v)
 
+                        info_v_edit = dict_vendedores.get(vendedor_lbl_edit, {})
+                        nuevo_vend_nom = info_v_edit.get("nombre", vendedor_actual_nom)
+                        nuevo_vend_id = info_v_edit.get("id_vendedor", id_vendedor_actual_v)
+
                         sql_update = """
                             UPDATE ventas 
-                            SET producto=:p, cliente=:c, id_cliente=:id_c, precio=:pre, cuota=:cuo, estado=:e, observacion=:obs
+                            SET producto=:p, cliente=:c, id_cliente=:id_c, vendedor=:v, id_vendedor=:id_v, precio=:pre, cuota=:cuo, estado=:e, observacion=:obs
                             WHERE venta_id=:id
                         """
                         ejecutar_query(sql_update, {
-                            "p": nuevo_prod, "c": nuevo_clie_nom, "id_c": nuevo_clie_id, "pre": nuevo_precio, 
+                            "p": nuevo_prod, "c": nuevo_clie_nom, "id_c": nuevo_clie_id,
+                            "v": nuevo_vend_nom, "id_v": nuevo_vend_id, "pre": nuevo_precio, 
                             "cuo": nueva_cuota, "e": nuevo_est, "obs": nueva_obs, "id": id_edit
                         })
                         st.success(f"✅ Venta #{id_edit} actualizada correctamente")
