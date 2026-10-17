@@ -1,8 +1,9 @@
 import streamlit as st
 from modules.auth import login, logout
 from modules.ventas import render_ventas
-from modules.ecommerce import render_ecommerce
+from modules.ecommerce import render_ecommerce, render_gestion_productos
 from modules.clientes import render_clientes
+from modules.vendedores import render_vendedores
 
 # --- 1. CONFIGURACIÓN Y ESTILOS CSS ---
 st.set_page_config(
@@ -24,32 +25,39 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CONTROL DE ACCESO (LOGIN) ---
-if login():
-    # --- BARRA LATERAL GENERAL ---
+# --- 2. GESTIÓN DE SESIÓN Y VISTA PÚBLICA / PRIVADA-- ---
+if "autenticado" not in st.session_state:
+    st.session_state.autenticado = False
+
+# MODO USUARIO AUTENTICADO (Vendedor / Admin)
+if st.session_state.autenticado:
+    if "redireccionar_a" in st.session_state:
+        st.session_state.navegacion_principal = st.session_state.pop("redireccionar_a")
+
+    if "navegacion_principal" not in st.session_state:
+        st.session_state.navegacion_principal = "📊 Gestión de Ventas"
+
     st.sidebar.markdown(f"👤 Usuario: **{st.session_state.usuario_actual}**")
     st.sidebar.markdown("---")
     
-    # NAVEGACIÓN PRINCIPAL
     modulo_seleccionado = st.sidebar.radio(
         "📌 Seleccione Módulo:",
-        ["📊 Gestión de Ventas", "🛒 E-Commerce", "⚙️ Paramétrico"]
+        ["📊 Gestión de Ventas", "🛒 E-Commerce", "⚙️ Paramétrico"],
+        key="navegacion_principal"
     )
     
-    # Submenú desplegable si elige Paramétrico
     submodulo_param = None
     if modulo_seleccionado == "⚙️ Paramétrico":
         submodulo_param = st.sidebar.selectbox(
             "📂 Selección de Gestión:",
-            ["👤 Gestión de Clientes", "📦 Gestión de Productos"]
+            ["👤 Gestión de Clientes", "👔 Gestión de Vendedores", "📦 Gestión de Productos"]
         )
     
     st.sidebar.markdown("---")
-    
-    if st.sidebar.button("🚪 Cerrar Sesión"):
+    if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
         logout()
 
-    # --- ENRUTAMIENTO DE MÓDULOS ---
+    # Enrutamiento privado
     if modulo_seleccionado == "📊 Gestión de Ventas":
         render_ventas()
     elif modulo_seleccionado == "🛒 E-Commerce":
@@ -57,7 +65,20 @@ if login():
     elif modulo_seleccionado == "⚙️ Paramétrico":
         if submodulo_param == "👤 Gestión de Clientes":
             render_clientes()
+        elif submodulo_param == "👔 Gestión de Vendedores":
+            render_vendedores()
         elif submodulo_param == "📦 Gestión de Productos":
-            # Renderiza la vista dedicada a gestión de productos
-            from modules.ecommerce import render_gestion_productos
             render_gestion_productos()
+
+# MODO CLIENTE PÚBLICO (Sin Login)
+else:
+    st.sidebar.title("🛍️ Bienvenido a la Tienda")
+    st.sidebar.info("Estás navegando como cliente.")
+    st.sidebar.markdown("---")
+    
+    # Formulario o botón para desplegar inicio de sesión
+    with st.sidebar.expander("🔑 Acceso Administrador / Vendedor"):
+        login()
+        
+    # Renderizar exclusivamente el catálogo público
+    render_ecommerce()
