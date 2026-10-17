@@ -13,6 +13,7 @@ def login():
 
         creds = st.secrets.get("credentials", {})
 
+ # --- PESTAÑA 4: EDICIÓN DE DETALLES (CUOTAS) ---
         with st.form("login_form"):
             usuario_input = st.text_input("Usuario")
             clave_input = st.text_input("Contraseña", type="password")
