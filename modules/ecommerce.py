@@ -149,7 +149,7 @@ def render_ecommerce():
             "Informática": "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=300&auto=format&fit=crop&q=60"
         }
         
-        imagen_default = "https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=300&auto=format&fit=crop&q=60"
+        imagen_default = "https://www.shutterstock.com/shutterstock/photos/2826333763/display_1500/stock-vector-smart-home-technology-icon-collection-featuring-smart-speakers-security-cameras-robotic-devices-2826333763.jpg"
 
         cols_sec = st.columns(min(len(categorias_disponibles), 4))
         for idx, cat in enumerate(categorias_disponibles):
