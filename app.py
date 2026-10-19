@@ -23,7 +23,7 @@ st.markdown("""
     .stApp > footer { display: none !important; }
     .block-container { padding-top: 1rem; padding-bottom: 0rem; }
 
-    /* --- OPTIMIZACIÓN ADICIONAL PARA MÓVILES (RAMA LOCAL) --- */
+    /* --- OPTIMIZACIÓN MÓVIL --- */
     @media (max-width: 768px) {
         .block-container {
             padding-left: 0.5rem;
@@ -37,7 +37,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. GESTIÓN DE SESIÓN Y VISTA PÚBLICA / PRIVADA-- ---
+# --- 2. GESTIÓN DE SESIÓN Y VISTA PÚBLICA / PRIVADA ---
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
@@ -49,6 +49,30 @@ if st.session_state.autenticado:
     if "navegacion_principal" not in st.session_state:
         st.session_state.navegacion_principal = "📊 Gestión de Ventas"
 
+    # --- BARRA DE NAVEGACIÓN SUPERIOR (VISIBLE EN MÓVIL Y ESCRITORIO) ---
+    c_nav1, c_nav2, c_nav3 = st.columns([2, 3, 1])
+    
+    with c_nav1:
+        st.caption(f"👤 Usuario: **{st.session_state.usuario_actual}** ({st.session_state.rol_usuario})")
+    
+    with c_nav2:
+        mod_sel_top = st.selectbox(
+            "📌 Módulo Actual:",
+            ["📊 Gestión de Ventas", "🛒 E-Commerce", "⚙️ Paramétrico"],
+            key="sb_nav_top",
+            index=["📊 Gestión de Ventas", "🛒 E-Commerce", "⚙️ Paramétrico"].index(st.session_state.navegacion_principal)
+        )
+        if mod_sel_top != st.session_state.navegacion_principal:
+            st.session_state.navegacion_principal = mod_sel_top
+            st.rerun()
+
+    with c_nav3:
+        if st.button("🚪 Salir", use_container_width=True, key="btn_logout_top"):
+            logout()
+
+    st.markdown("---")
+
+    # BARRA LATERAL (Mantiene sincronización para pantallas grandes)
     st.sidebar.markdown(f"👤 Usuario: **{st.session_state.usuario_actual}**")
     st.sidebar.markdown("---")
     
@@ -57,16 +81,25 @@ if st.session_state.autenticado:
         ["📊 Gestión de Ventas", "🛒 E-Commerce", "⚙️ Paramétrico"],
         key="navegacion_principal"
     )
-    
+
     submodulo_param = None
     if modulo_seleccionado == "⚙️ Paramétrico":
+        # En móvil también mostramos el submódulo si está seleccionado Paramétrico
         submodulo_param = st.sidebar.selectbox(
             "📂 Selección de Gestión:",
-            ["👤 Gestión de Clientes", "👔 Gestión de Vendedores", "📦 Gestión de Productos"]
+            ["👤 Gestión de Clientes", "👔 Gestión de Vendedores", "📦 Gestión de Productos"],
+            key="sb_submodulo_sidebar"
         )
-    
+        # Copia visible en pantalla principal para fácil acceso en celular
+        submodulo_param_top = st.selectbox(
+            "📂 Gestión Paramétrica:",
+            ["👤 Gestión de Clientes", "👔 Gestión de Vendedores", "📦 Gestión de Productos"],
+            key="sb_submodulo_top"
+        )
+        submodulo_param = submodulo_param_top
+
     st.sidebar.markdown("---")
-    if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
+    if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True, key="btn_logout_sidebar"):
         logout()
 
     # Enrutamiento privado
@@ -99,5 +132,4 @@ else:
     with st.sidebar.expander("🔑 Acceso Administrador / Vendedor"):
         login(form_key="login_form_sidebar")
         
-    # Renderizar exclusivamente el catálogo público
     render_ecommerce()

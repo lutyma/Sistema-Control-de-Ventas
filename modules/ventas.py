@@ -101,7 +101,6 @@ def dialog_ver_venta_completa(id_venta):
 # --- DIÁLOGO 2: PAGO RÁPIDO DESDE HISTORIAL (GRILLA) ---
 @st.dialog("💳 Cobro Rápido de Cuota")
 def dialog_pago_rapido(id_venta, producto, cliente):
-    # Si la bandera de éxito aún no existe, estamos en el paso de cobro
     if not st.session_state.get("cobro_rapido_exitoso", False):
         df_cuota_pendiente = cargar_datos("""
             SELECT * FROM detalle_ventas 
@@ -170,7 +169,6 @@ def dialog_pago_rapido(id_venta, producto, cliente):
                             WHERE venta_id = :id_v AND cuota >= total_cuota
                         """), {"id_v": id_venta})
 
-                # Marcar el cobro como exitoso para mostrar inmediatamente la pantalla de WhatsApp
                 st.session_state.cobro_rapido_exitoso = True
                 st.session_state.monto_cobrado_hoy = monto_a_cobrar
                 st.session_state.num_cuota_cobrada = num_cuota
@@ -183,7 +181,6 @@ def dialog_pago_rapido(id_venta, producto, cliente):
             st.rerun()
 
     else:
-        # PANTALLA DE COMPROBANTE WHATSAPP
         monto_cb = st.session_state.get("monto_cobrado_hoy", 0.0)
         cuota_cb = st.session_state.get("num_cuota_cobrada", 1)
         st.success(f"🎉 ¡Pago de Gs. {monto_cb:,.0f} registrado con éxito!")
@@ -236,6 +233,86 @@ def dialog_eliminar_venta(id_venta, producto, cliente):
         st.rerun()
 
 
+# --- FUNCIÓN AUXILIAR PARA GUARDAR VENTA ---
+def procesar_guardado_venta(cliente_sel, vendedor_sel, producto_sel, id_c_sel, id_v_sel, prod_id_sel, precio, cuotas, monto_c, comision, t_pago, est_inp):
+    try:
+        fecha_actual = datetime.now()
+        
+        if t_pago == "Mensual con entrega":
+            cuota_inicial = 1
+            fecha_u_pago = fecha_actual
+        else:
+            cuota_inicial = 0
+            fecha_u_pago = None
+
+        with engine.begin() as conn:
+            sql_venta = text("""
+                INSERT INTO ventas (
+                    producto, cliente, vendedor, precio, total_cuota, 
+                    monto_cuota, comision, tipo_pago, estado, fecha_creacion, 
+                    cuota, fecha_ultimo_pago, id_cliente, producto_id, id_vendedor
+                )
+                VALUES (
+                    :p, :c, :vend, :pre, :tcuo, 
+                    :mcuo, :com, :tpago, :est, :fecha, 
+                    :cuo, :fupago, :id_c, :prod_id, :id_v
+                )
+                RETURNING venta_id
+            """)
+            res = conn.execute(sql_venta, {
+                "p": producto_sel, "c": cliente_sel, "vend": vendedor_sel, "pre": precio, 
+                "tcuo": cuotas, "mcuo": monto_c, 
+                "com": comision, "tpago": t_pago, "est": est_inp, "fecha": fecha_actual,
+                "cuo": cuota_inicial, "fupago": fecha_u_pago,
+                "id_c": id_c_sel, "prod_id": prod_id_sel, "id_v": id_v_sel
+            })
+            nuevo_id = res.fetchone()[0]
+
+            conn.execute(text("""
+                UPDATE ecommerce_productos 
+                SET stock = GREATEST(0, stock - 1) 
+                WHERE nombre = :p
+            """), {"p": producto_sel})
+
+            sql_cuota = text("""
+                INSERT INTO detalle_ventas (venta_id, item_cuota, monto_cuota, monto_pago, saldo_cuota, estado, fecha_vencimiento, fecha_pago)
+                VALUES (:id_p, :item, :monto, :pago, :saldo, :est_c, :fv, :fp)
+            """)
+
+            for i in range(1, int(cuotas) + 1):
+                vencimiento = None
+                pago = None
+                monto_pagado = 0
+                saldo = monto_c
+                estado_cuota = "Activo"
+
+                if t_pago == "Mensual con entrega":
+                    vencimiento = fecha_actual + relativedelta(months=(i-1))
+                    if i == 1:
+                        pago = fecha_actual
+                        monto_pagado = monto_c
+                        saldo = 0
+                        estado_cuota = "Cancelado"
+                        vencimiento = fecha_actual
+                elif t_pago == "Mensual sin entrega":
+                    vencimiento = fecha_actual + relativedelta(months=i)
+                elif t_pago == "Semanal":
+                    dias_al_domingo = (6 - fecha_actual.weekday()) % 7
+                    primer_domingo = fecha_actual + timedelta(days=dias_al_domingo)
+                    vencimiento = primer_domingo + timedelta(weeks=(i-1))
+
+                conn.execute(sql_cuota, {
+                    "id_p": nuevo_id, "item": i, "monto": monto_c,
+                    "pago": monto_pagado, "saldo": saldo, "est_c": estado_cuota,
+                    "fv": vencimiento, "fp": pago
+                })
+
+        st.session_state.pop("producto_desde_ecom", None)
+        return True, nuevo_id
+    except Exception as e:
+        return False, str(e)
+
+
 def render_ventas():
 
     if "usuario_actual" not in st.session_state:
@@ -243,12 +320,10 @@ def render_ventas():
     if "rol_usuario" not in st.session_state:
         st.session_state.rol_usuario = "vendedor"
 
-    # --- CONTROL DE PERMISOS SEGÚN ROL ---
     rol_actual = str(st.session_state.rol_usuario).lower()
     es_admin = (rol_actual == "admin")
     puede_pagar_o_eliminar = es_admin
 
-    # --- CARGA DE DATOS BASE ---
     df_v = cargar_datos("SELECT * FROM ventas ORDER BY venta_id DESC")
     
     # 1. Cargar Clientes
@@ -346,7 +421,7 @@ def render_ventas():
                 if id_p == p_ecom.get("id_producto"):
                     index_producto_sel = len(opciones_productos) - 1
 
-    # --- BARRA LATERAL: REGISTRO DE VENTAS ---
+    # --- BARRA LATERAL: REGISTRO DE VENTAS (ESCRITORIO) ---
     st.sidebar.header("🆕 Registrar Nueva Venta")
 
     if len(opciones_clientes) == 1:
@@ -412,88 +487,75 @@ def render_ventas():
                 elif producto_label_sel == PLACEHOLDER_PRODUCTO or not producto_seleccionado:
                     st.sidebar.error("❌ Debe seleccionar un producto registrado válido.")
                 elif precio_final > 0 and cantidad_cuotas > 0:
-                    try:
-                        fecha_actual = datetime.now()
-                        
-                        if tipo_pago == "Mensual con entrega":
-                            cuota_inicial = 1
-                            fecha_u_pago = fecha_actual
-                        else:
-                            cuota_inicial = 0
-                            fecha_u_pago = None
-
-                        with engine.begin() as conn:
-                            sql_venta = text("""
-                                INSERT INTO ventas (
-                                    producto, cliente, vendedor, precio, total_cuota, 
-                                    monto_cuota, comision, tipo_pago, estado, fecha_creacion, 
-                                    cuota, fecha_ultimo_pago, id_cliente, producto_id, id_vendedor
-                                )
-                                VALUES (
-                                    :p, :c, :vend, :pre, :tcuo, 
-                                    :mcuo, :com, :tpago, :est, :fecha, 
-                                    :cuo, :fupago, :id_c, :prod_id, :id_v
-                                )
-                                RETURNING venta_id
-                            """)
-                            res = conn.execute(sql_venta, {
-                                "p": producto_seleccionado, "c": cliente_seleccionado, "vend": vendedor_seleccionado, "pre": precio_final, 
-                                "tcuo": cantidad_cuotas, "mcuo": monto_cuota_input, 
-                                "com": comision, "tpago": tipo_pago, "est": estado_input, "fecha": fecha_actual,
-                                "cuo": cuota_inicial, "fupago": fecha_u_pago,
-                                "id_c": id_cliente_sel, "prod_id": producto_id_sel, "id_v": id_vendedor_sel
-                            })
-                            nuevo_id = res.fetchone()[0]
-
-                            conn.execute(text("""
-                                UPDATE ecommerce_productos 
-                                SET stock = GREATEST(0, stock - 1) 
-                                WHERE nombre = :p
-                            """), {"p": producto_seleccionado})
-
-                            sql_cuota = text("""
-                                INSERT INTO detalle_ventas (venta_id, item_cuota, monto_cuota, monto_pago, saldo_cuota, estado, fecha_vencimiento, fecha_pago)
-                                VALUES (:id_p, :item, :monto, :pago, :saldo, :est_c, :fv, :fp)
-                            """)
-
-                            for i in range(1, int(cantidad_cuotas) + 1):
-                                vencimiento = None
-                                pago = None
-                                monto_pagado = 0
-                                saldo = monto_cuota_input
-                                estado_cuota = "Activo"
-
-                                if tipo_pago == "Mensual con entrega":
-                                    vencimiento = fecha_actual + relativedelta(months=(i-1))
-                                    if i == 1:
-                                        pago = fecha_actual
-                                        monto_pagado = monto_cuota_input
-                                        saldo = 0
-                                        estado_cuota = "Cancelado"
-                                        vencimiento = fecha_actual
-                                elif tipo_pago == "Mensual sin entrega":
-                                    vencimiento = fecha_actual + relativedelta(months=i)
-                                elif tipo_pago == "Semanal":
-                                    dias_al_domingo = (6 - fecha_actual.weekday()) % 7
-                                    primer_domingo = fecha_actual + timedelta(days=dias_al_domingo)
-                                    vencimiento = primer_domingo + timedelta(weeks=(i-1))
-
-                                conn.execute(sql_cuota, {
-                                    "id_p": nuevo_id, "item": i, "monto": monto_cuota_input,
-                                    "pago": monto_pagado, "saldo": saldo, "est_c": estado_cuota,
-                                    "fv": vencimiento, "fp": pago
-                                })
-
-                        st.session_state.pop("producto_desde_ecom", None)
-                        st.sidebar.success(f"✅ Venta #{nuevo_id} procesada exitosamente.")
+                    exito, id_o_error = procesar_guardado_venta(
+                        cliente_seleccionado, vendedor_seleccionado, producto_seleccionado,
+                        id_cliente_sel, id_vendedor_sel, producto_id_sel,
+                        precio_final, cantidad_cuotas, monto_cuota_input, comision, tipo_pago, estado_input
+                    )
+                    if exito:
+                        st.sidebar.success(f"✅ Venta #{id_o_error} procesada exitosamente.")
                         st.rerun()
-                    except Exception as e:
-                        st.sidebar.error(f"Error al procesar la venta: {e}")
+                    else:
+                        st.sidebar.error(f"Error al procesar la venta: {id_o_error}")
                 else:
                     st.sidebar.warning("⚠️ Por favor complete todos los campos requeridos.")
 
     # --- CUERPO PRINCIPAL ---
     st.title("📊 Sistema de Control de Ventas e Ingresos")
+
+    # --- DESPLEGABLE EN PANTALLA PRINCIPAL PARA REGISTRAR VENTA (ESPECIAL MÓVIL) ---
+    with st.expander("🆕 Registrar Nueva Venta (Acceso Rápido / Móvil)"):
+        if len(opciones_clientes) > 1 and len(opciones_vendedores) > 1 and len(opciones_productos) > 1:
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                cli_m_lbl = st.selectbox("👤 Cliente*", opciones_clientes, index=0, key="sb_cli_movil")
+                vend_m_lbl = st.selectbox("👔 Vendedor*", opciones_vendedores, index=0, key="sb_vend_movil")
+                prod_m_lbl = st.selectbox("📦 Producto*", opciones_productos, index=index_producto_sel, key="sb_prod_movil")
+
+            info_c_m = dict_clientes.get(cli_m_lbl, {})
+            info_v_m = dict_vendedores.get(vend_m_lbl, {})
+            info_p_m = dict_productos.get(prod_m_lbl, {})
+
+            with col_m2:
+                precio_m = st.number_input("Precio Total (Gs.)*", min_value=0.0, value=info_p_m.get("precio", 0.0), key="pre_movil")
+                cuotas_m = st.number_input("Cantidad de Cuotas*", min_value=1, value=int(info_p_m.get("cant_cuotas", 1)), key="cuo_movil")
+                monto_c_m = st.number_input("Monto por Cuota (Gs.)*", min_value=0.0, value=info_p_m.get("monto_cuota", 0.0), key="mc_movil")
+
+            col_m3, col_m4 = st.columns(2)
+            with col_m3:
+                comision_m = st.number_input("Comisión Vendedor (Gs.)*", min_value=0.0, value=info_p_m.get("comision", 0.0), key="com_movil")
+                tipo_pago_m = st.selectbox("Tipo de Pago*", ["Mensual con entrega", "Mensual sin entrega", "Semanal"], key="tp_movil")
+            with col_m4:
+                estado_m = st.selectbox("Estado*", ["Activo", "Cancelado"], key="est_movil")
+
+            if st.button("🚀 Registrar Venta Ahora", type="primary", use_container_width=True, key="btn_reg_movil"):
+                cli_m_nom = info_c_m.get("nombre", "")
+                vend_m_nom = info_v_m.get("nombre", "")
+                prod_m_nom = info_p_m.get("nombre", "")
+
+                if cli_m_lbl == PLACEHOLDER_CLIENTE or not cli_m_nom:
+                    st.error("❌ Debe seleccionar un cliente registrado válido.")
+                elif vend_m_lbl == PLACEHOLDER_VENDEDOR or not vend_m_nom:
+                    st.error("❌ Debe seleccionar un vendedor registrado válido.")
+                elif prod_m_lbl == PLACEHOLDER_PRODUCTO or not prod_m_nom:
+                    st.error("❌ Debe seleccionar un producto registrado válido.")
+                elif precio_m > 0 and cuotas_m > 0:
+                    exito_m, res_m = procesar_guardado_venta(
+                        cli_m_nom, vend_m_nom, prod_m_nom,
+                        info_c_m.get("id_cliente"), info_v_m.get("id_vendedor"), info_p_m.get("producto_id"),
+                        precio_m, cuotas_m, monto_c_m, comision_m, tipo_pago_m, estado_m
+                    )
+                    if exito_m:
+                        st.success(f"✅ Venta #{res_m} procesada exitosamente.")
+                        st.rerun()
+                    else:
+                        st.error(f"Error al procesar la venta: {res_m}")
+                else:
+                    st.warning("⚠️ Por favor complete todos los campos requeridos.")
+        else:
+            st.warning("⚠️ Asegúrese de tener clientes, vendedores y productos registrados para realizar una venta.")
+
+    st.divider()
 
     tab_lista, tab_detalles, tab_editar, tab_editar_detalles = st.tabs([
         "📋 Listado de Ventas", 
@@ -596,7 +658,6 @@ def render_ventas():
                             if st.button("💳 Pagar", key=f"btn_pago_grid_{id_v}", disabled=not pago_habilitado, type="primary", use_container_width=True, help="Solo Administradores" if not puede_pagar_o_eliminar else ""):
                                 limpiar_modal_ver()
                                 limpiar_modal_eliminar()
-                                # LIMPIAR CUALQUIER ESTADO RESIDUAL DE COBRO ANTERIOR ANTES DE ABRIR EL NUEVO PAGO
                                 limpiar_modal_pago()
                                 st.session_state.pago_rapido_datos = {
                                     "id": id_v,
@@ -627,7 +688,6 @@ def render_ventas():
             elif "pago_rapido_datos" in st.session_state:
                 datos_p = st.session_state.pago_rapido_datos
                 dialog_pago_rapido(datos_p['id'], datos_p['producto'], datos_p['cliente'])
-                # Si el diálogo se cerró con la "X", limpiamos el estado automáticamente al recargar
                 if "pago_rapido_datos" in st.session_state:
                     limpiar_modal_pago()
 
@@ -755,7 +815,6 @@ def render_ventas():
             vendedor_actual_nom = str(fila_actual['vendedor']).strip() if pd.notnull(fila_actual['vendedor']) else ""
             id_vendedor_actual_v = int(fila_actual['id_vendedor']) if 'id_vendedor' in fila_actual and pd.notnull(fila_actual['id_vendedor']) else None
 
-            # Index Cliente
             idx_cliente_select = 0
             if dict_clientes:
                 for idx, (lbl, datos_c) in enumerate(dict_clientes.items(), start=1):
@@ -766,7 +825,6 @@ def render_ventas():
                         idx_cliente_select = idx
                         break
 
-            # Index Vendedor
             idx_vendedor_select = 0
             if dict_vendedores:
                 for idx, (lbl, datos_v) in enumerate(dict_vendedores.items(), start=1):
