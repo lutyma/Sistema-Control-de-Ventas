@@ -22,6 +22,19 @@ st.markdown("""
     div[class^="viewerBadge"], div[class*="viewerBadge"] { display: none !important; }
     .stApp > footer { display: none !important; }
     .block-container { padding-top: 1rem; padding-bottom: 0rem; }
+
+    /* --- OPTIMIZACIÓN ADICIONAL PARA MÓVILES (RAMA LOCAL) --- */
+    @media (max-width: 768px) {
+        .block-container {
+            padding-left: 0.5rem;
+            padding-right: 0.5rem;
+        }
+        /* Botones más cómodos para el tacto en pantallas pequeñas */
+        div.stButton > button {
+            width: 100% !important;
+            margin-bottom: 5px;
+        }
+    }
     </style>
 """, unsafe_allow_html=True)
 
