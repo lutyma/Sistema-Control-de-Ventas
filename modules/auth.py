@@ -1,6 +1,6 @@
 import streamlit as st
 
-def login():
+def login(form_key="login_form"):
     if "autenticado" not in st.session_state:
         st.session_state.autenticado = False
     if "usuario_actual" not in st.session_state:
@@ -13,10 +13,9 @@ def login():
 
         creds = st.secrets.get("credentials", {})
 
- # --- PESTAÑA 4: EDICIÓN DE DETALLES (CUOTAS) ---
-        with st.form("login_form"):
-            usuario_input = st.text_input("Usuario")
-            clave_input = st.text_input("Contraseña", type="password")
+        with st.form(form_key):
+            usuario_input = st.text_input("Usuario", key=f"user_{form_key}")
+            clave_input = st.text_input("Contraseña", type="password", key=f"pass_{form_key}")
             submit = st.form_submit_button("Entrar")
             
             if submit:
@@ -26,7 +25,6 @@ def login():
                 if u_clean in creds:
                     datos_user = creds[u_clean]
                     
-                    # Extraer la contraseña de la estructura dict de TOML
                     if isinstance(datos_user, dict) or hasattr(datos_user, "get"):
                         pass_db = str(datos_user.get("password", "")).strip()
                         rol_db = str(datos_user.get("role", "vendedor")).strip()
