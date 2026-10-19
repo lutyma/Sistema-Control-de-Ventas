@@ -421,148 +421,106 @@ def render_ventas():
                 if id_p == p_ecom.get("id_producto"):
                     index_producto_sel = len(opciones_productos) - 1
 
-    # --- BARRA LATERAL: REGISTRO DE VENTAS (ESCRITORIO) ---
-    st.sidebar.header("🆕 Registrar Nueva Venta")
-
-    if len(opciones_clientes) == 1:
-        st.sidebar.warning("⚠️ No hay clientes registrados. Vaya al menú '⚙️ Paramétrico -> 👤 Gestión de Clientes' para registrar uno.")
-    elif len(opciones_vendedores) == 1:
-        st.sidebar.warning("⚠️ No hay vendedores registrados. Vaya al menú '⚙️ Paramétrico -> 👔 Gestión de Vendedores' para registrar uno.")
-    elif len(opciones_productos) == 1:
-        st.sidebar.warning("⚠️ No hay productos registrados. Vaya al menú '⚙️ Paramétrico -> 📦 Gestión de Productos' para registrar productos.")
-    else:
-        cliente_label_sel = st.sidebar.selectbox(
-            "👤 Buscar / Seleccionar Cliente*", 
-            options=opciones_clientes,
-            index=0,
-            key="sb_cliente_venta"
-        )
-        info_c = dict_clientes.get(cliente_label_sel, {})
-        cliente_seleccionado = info_c.get("nombre", "")
-        id_cliente_sel = info_c.get("id_cliente", None)
-
-        vendedor_label_sel = st.sidebar.selectbox(
-            "👔 Buscar / Seleccionar Vendedor*", 
-            options=opciones_vendedores,
-            index=0,
-            key="sb_vendedor_venta"
-        )
-        info_v = dict_vendedores.get(vendedor_label_sel, {})
-        vendedor_seleccionado = info_v.get("nombre", "")
-        id_vendedor_sel = info_v.get("id_vendedor", None)
-
-        producto_label_sel = st.sidebar.selectbox(
-            "📦 Buscar / Seleccionar Producto*",
-            options=opciones_productos,
-            index=index_producto_sel,
-            key="sb_producto_venta"
-        )
-
-        info_p = dict_productos.get(producto_label_sel, {})
-        producto_seleccionado = info_p.get("nombre", "")
-        producto_id_sel = info_p.get("producto_id", None)
-        precio_default = info_p.get("precio", 0.0)
-        cuotas_default = info_p.get("cant_cuotas", 1)
-        if cuotas_default < 1:
-            cuotas_default = 1
-        monto_cuota_default = info_p.get("monto_cuota", 0.0)
-        comision_default = info_p.get("comision", 0.0)
-
-        with st.sidebar.form("form_registro", clear_on_submit=True):
-            precio_final = st.number_input("Precio Total Venta*", min_value=0.0, value=precio_default, format="%.2f")
-            cantidad_cuotas = st.number_input("Cantidad de Cuotas*", min_value=1, value=int(cuotas_default), step=1)
-            monto_cuota_input = st.number_input("Monto por Cuota*", min_value=0.0, value=monto_cuota_default, format="%.2f")
-            comision = st.number_input("Comisión Vendedor*", min_value=0.0, value=comision_default, format="%.2f")
-            
-            tipo_pago = st.selectbox("Tipo de Pago*", ["Mensual con entrega", "Mensual sin entrega", "Semanal"])
-            estado_input = st.selectbox("Estado*", ["Activo", "Cancelado"])
-            
-            btn_crear = st.form_submit_button("Generar Venta y Cronograma")
-            
-            if btn_crear:
-                if cliente_label_sel == PLACEHOLDER_CLIENTE or not cliente_seleccionado:
-                    st.sidebar.error("❌ Debe seleccionar un cliente registrado válido.")
-                elif vendedor_label_sel == PLACEHOLDER_VENDEDOR or not vendedor_seleccionado:
-                    st.sidebar.error("❌ Debe seleccionar un vendedor registrado válido.")
-                elif producto_label_sel == PLACEHOLDER_PRODUCTO or not producto_seleccionado:
-                    st.sidebar.error("❌ Debe seleccionar un producto registrado válido.")
-                elif precio_final > 0 and cantidad_cuotas > 0:
-                    exito, id_o_error = procesar_guardado_venta(
-                        cliente_seleccionado, vendedor_seleccionado, producto_seleccionado,
-                        id_cliente_sel, id_vendedor_sel, producto_id_sel,
-                        precio_final, cantidad_cuotas, monto_cuota_input, comision, tipo_pago, estado_input
-                    )
-                    if exito:
-                        st.sidebar.success(f"✅ Venta #{id_o_error} procesada exitosamente.")
-                        st.rerun()
-                    else:
-                        st.sidebar.error(f"Error al procesar la venta: {id_o_error}")
-                else:
-                    st.sidebar.warning("⚠️ Por favor complete todos los campos requeridos.")
-
     # --- CUERPO PRINCIPAL ---
     st.title("📊 Sistema de Control de Ventas e Ingresos")
 
-    # --- DESPLEGABLE EN PANTALLA PRINCIPAL PARA REGISTRAR VENTA (ESPECIAL MÓVIL) ---
-    with st.expander("🆕 Registrar Nueva Venta (Acceso Rápido / Móvil)"):
-        if len(opciones_clientes) > 1 and len(opciones_vendedores) > 1 and len(opciones_productos) > 1:
-            col_m1, col_m2 = st.columns(2)
-            with col_m1:
-                cli_m_lbl = st.selectbox("👤 Cliente*", opciones_clientes, index=0, key="sb_cli_movil")
-                vend_m_lbl = st.selectbox("👔 Vendedor*", opciones_vendedores, index=0, key="sb_vend_movil")
-                prod_m_lbl = st.selectbox("📦 Producto*", opciones_productos, index=index_producto_sel, key="sb_prod_movil")
-
-            info_c_m = dict_clientes.get(cli_m_lbl, {})
-            info_v_m = dict_vendedores.get(vend_m_lbl, {})
-            info_p_m = dict_productos.get(prod_m_lbl, {})
-
-            with col_m2:
-                precio_m = st.number_input("Precio Total (Gs.)*", min_value=0.0, value=info_p_m.get("precio", 0.0), key="pre_movil")
-                cuotas_m = st.number_input("Cantidad de Cuotas*", min_value=1, value=int(info_p_m.get("cant_cuotas", 1)), key="cuo_movil")
-                monto_c_m = st.number_input("Monto por Cuota (Gs.)*", min_value=0.0, value=info_p_m.get("monto_cuota", 0.0), key="mc_movil")
-
-            col_m3, col_m4 = st.columns(2)
-            with col_m3:
-                comision_m = st.number_input("Comisión Vendedor (Gs.)*", min_value=0.0, value=info_p_m.get("comision", 0.0), key="com_movil")
-                tipo_pago_m = st.selectbox("Tipo de Pago*", ["Mensual con entrega", "Mensual sin entrega", "Semanal"], key="tp_movil")
-            with col_m4:
-                estado_m = st.selectbox("Estado*", ["Activo", "Cancelado"], key="est_movil")
-
-            if st.button("🚀 Registrar Venta Ahora", type="primary", use_container_width=True, key="btn_reg_movil"):
-                cli_m_nom = info_c_m.get("nombre", "")
-                vend_m_nom = info_v_m.get("nombre", "")
-                prod_m_nom = info_p_m.get("nombre", "")
-
-                if cli_m_lbl == PLACEHOLDER_CLIENTE or not cli_m_nom:
-                    st.error("❌ Debe seleccionar un cliente registrado válido.")
-                elif vend_m_lbl == PLACEHOLDER_VENDEDOR or not vend_m_nom:
-                    st.error("❌ Debe seleccionar un vendedor registrado válido.")
-                elif prod_m_lbl == PLACEHOLDER_PRODUCTO or not prod_m_nom:
-                    st.error("❌ Debe seleccionar un producto registrado válido.")
-                elif precio_m > 0 and cuotas_m > 0:
-                    exito_m, res_m = procesar_guardado_venta(
-                        cli_m_nom, vend_m_nom, prod_m_nom,
-                        info_c_m.get("id_cliente"), info_v_m.get("id_vendedor"), info_p_m.get("producto_id"),
-                        precio_m, cuotas_m, monto_c_m, comision_m, tipo_pago_m, estado_m
-                    )
-                    if exito_m:
-                        st.success(f"✅ Venta #{res_m} procesada exitosamente.")
-                        st.rerun()
-                    else:
-                        st.error(f"Error al procesar la venta: {res_m}")
-                else:
-                    st.warning("⚠️ Por favor complete todos los campos requeridos.")
-        else:
-            st.warning("⚠️ Asegúrese de tener clientes, vendedores y productos registrados para realizar una venta.")
-
-    st.divider()
-
-    tab_lista, tab_detalles, tab_editar, tab_editar_detalles = st.tabs([
+    # --- PESTAÑAS PRINCIPALES (INCLUYENDO REGISTRO DE VENTA VISIBLE) ---
+    tab_reg_venta, tab_lista, tab_detalles, tab_editar, tab_editar_detalles = st.tabs([
+        "➕ Registrar Venta",
         "📋 Listado de Ventas", 
-        "🔍 Ver Detalles de Cuotas", 
+        "🔍 Ver Detalles", 
         "✏️ Modificar Venta", 
         "💳 Modificar Cuota"
     ])
+
+    # --- PESTAÑA 0: REGISTRAR VENTA (OPTIMIZADA PARA MÓVIL Y ESCRITORIO) ---
+    with tab_reg_venta:
+        st.subheader("🆕 Registrar Nueva Venta")
+        
+        if len(opciones_clientes) == 1:
+            st.warning("⚠️ No hay clientes registrados. Vaya al menú '⚙️ Paramétrico -> 👤 Gestión de Clientes' para registrar uno.")
+        elif len(opciones_vendedores) == 1:
+            st.warning("⚠️ No hay vendedores registrados. Vaya al menú '⚙️ Paramétrico -> 👔 Gestión de Vendedores' para registrar uno.")
+        elif len(opciones_productos) == 1:
+            st.warning("⚠️ No hay productos registrados. Vaya al menú '⚙️ Paramétrico -> 📦 Gestión de Productos' para registrar productos.")
+        else:
+            with st.form("form_registro_principal", clear_on_submit=True):
+                col_r1, col_r2 = st.columns(2)
+                with col_r1:
+                    cliente_label_sel = st.selectbox(
+                        "👤 Buscar / Seleccionar Cliente*", 
+                        options=opciones_clientes,
+                        index=0,
+                        key="sb_cliente_venta_p"
+                    )
+                    vendedor_label_sel = st.selectbox(
+                        "👔 Buscar / Seleccionar Vendedor*", 
+                        options=opciones_vendedores,
+                        index=0,
+                        key="sb_vendedor_venta_p"
+                    )
+                with col_r2:
+                    producto_label_sel = st.selectbox(
+                        "📦 Buscar / Seleccionar Producto*",
+                        options=opciones_productos,
+                        index=index_producto_sel,
+                        key="sb_producto_venta_p"
+                    )
+
+                info_c = dict_clientes.get(cliente_label_sel, {})
+                cliente_seleccionado = info_c.get("nombre", "")
+                id_cliente_sel = info_c.get("id_cliente", None)
+
+                info_v = dict_vendedores.get(vendedor_label_sel, {})
+                vendedor_seleccionado = info_v.get("nombre", "")
+                id_vendedor_sel = info_v.get("id_vendedor", None)
+
+                info_p = dict_productos.get(producto_label_sel, {})
+                producto_seleccionado = info_p.get("nombre", "")
+                producto_id_sel = info_p.get("producto_id", None)
+                precio_default = info_p.get("precio", 0.0)
+                cuotas_default = info_p.get("cant_cuotas", 1)
+                if cuotas_default < 1:
+                    cuotas_default = 1
+                monto_cuota_default = info_p.get("monto_cuota", 0.0)
+                comision_default = info_p.get("comision", 0.0)
+
+                col_num1, col_num2 = st.columns(2)
+                with col_num1:
+                    precio_final = st.number_input("Precio Total Venta*", min_value=0.0, value=precio_default, format="%.2f")
+                    cantidad_cuotas = st.number_input("Cantidad de Cuotas*", min_value=1, value=int(cuotas_default), step=1)
+                with col_num2:
+                    monto_cuota_input = st.number_input("Monto por Cuota*", min_value=0.0, value=monto_cuota_default, format="%.2f")
+                    comision = st.number_input("Comisión Vendedor*", min_value=0.0, value=comision_default, format="%.2f")
+                
+                col_sel1, col_sel2 = st.columns(2)
+                with col_sel1:
+                    tipo_pago = st.selectbox("Tipo de Pago*", ["Mensual con entrega", "Mensual sin entrega", "Semanal"])
+                with col_sel2:
+                    estado_input = st.selectbox("Estado*", ["Activo", "Cancelado"])
+                
+                btn_crear = st.form_submit_button("🚀 Generar Venta y Cronograma", type="primary", use_container_width=True)
+                
+                if btn_crear:
+                    if cliente_label_sel == PLACEHOLDER_CLIENTE or not cliente_seleccionado:
+                        st.error("❌ Debe seleccionar un cliente registrado válido.")
+                    elif vendedor_label_sel == PLACEHOLDER_VENDEDOR or not vendedor_seleccionado:
+                        st.error("❌ Debe seleccionar un vendedor registrado válido.")
+                    elif producto_label_sel == PLACEHOLDER_PRODUCTO or not producto_seleccionado:
+                        st.error("❌ Debe seleccionar un producto registrado válido.")
+                    elif precio_final > 0 and cantidad_cuotas > 0:
+                        exito, id_o_error = procesar_guardado_venta(
+                            cliente_seleccionado, vendedor_seleccionado, producto_seleccionado,
+                            id_cliente_sel, id_vendedor_sel, producto_id_sel,
+                            precio_final, cantidad_cuotas, monto_cuota_input, comision, tipo_pago, estado_input
+                        )
+                        if exito:
+                            st.success(f"✅ Venta #{id_o_error} procesada exitosamente.")
+                            st.rerun()
+                        else:
+                            st.error(f"Error al procesar la venta: {id_o_error}")
+                    else:
+                        st.warning("⚠️ Por favor complete todos los campos requeridos.")
 
     # --- PESTAÑA 1: LISTADO GENERAL CON FILTROS ---
     with tab_lista:
