@@ -29,7 +29,6 @@ st.markdown("""
             padding-left: 0.5rem;
             padding-right: 0.5rem;
         }
-        /* Botones más cómodos para el tacto en pantallas pequeñas */
         div.stButton > button {
             width: 100% !important;
             margin-bottom: 5px;
@@ -85,11 +84,19 @@ if st.session_state.autenticado:
 
 # MODO CLIENTE PÚBLICO (Sin Login)
 else:
+    # Añadimos una barra superior o expander visible también en el cuerpo principal para móviles
+    c_top1, c_top2 = st.columns([3, 1])
+    with c_top1:
+        st.info("🛍️ Estás navegando como cliente en la tienda.")
+    with c_top2:
+        with st.popover("🔑 Iniciar Sesión"):
+            st.markdown("### Acceso Personal")
+            login()
+
     st.sidebar.title("🛍️ Bienvenido a la Tienda")
     st.sidebar.info("Estás navegando como cliente.")
     st.sidebar.markdown("---")
     
-    # Formulario o botón para desplegar inicio de sesión
     with st.sidebar.expander("🔑 Acceso Administrador / Vendedor"):
         login()
         
